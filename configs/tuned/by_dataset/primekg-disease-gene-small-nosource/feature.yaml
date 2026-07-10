@@ -1,0 +1,33 @@
+anchor_stabilization:
+  lambda1: 1.0
+  lambda2: 0.05
+
+inpainting:
+  cc_drop_threshold: 0.3
+  min_damage_ratio: 0.1
+  edge_threshold: 0.5
+  max_added_edges: 256
+  repair_ratio: 0.25
+
+unlearning:
+  edge_forget_loss_mode: uniform
+  forget_weight: 0.3
+  finetune_epochs: 80
+  finetune_lr: 0.005
+
+# Selected by experiments/sweep_hasi_params.py
+# grid: privacy_refine
+# score_mode: formal
+# score: 0.42620429278866273
+# score_without_stability: 0.39146380720905444
+# stability_penalty_norm: 0.3474048557960827
+# passes_hard_constraints: True
+# val_accuracy_drop_mean: 0.012156328107248352
+# val_accuracy_drop_std: 0.006653350013512304
+# val_f1_macro_drop_mean: 0.010905140533271629
+# val_f1_macro_drop_std: 0.0065830440818525305
+# overall_mia_auc_mean: 0.5796966552734375
+# privacy_gap_mean: 0.0796966552734375
+# structure_damage_norm: 0.0
+# unlearn_time_seconds_mean: 0.6661209533146272
+# runtime_ratio_vs_default_mean: 1.1028860822799194

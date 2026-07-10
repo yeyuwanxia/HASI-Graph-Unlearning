@@ -1,0 +1,43 @@
+# Datasets and locally downloaded raw inputs
+/data/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Logs and transient runtime output
+*.log
+logs/
+opengu_adapted_baselines/logs/
+
+
+# Generated forget-set JSONs are reproducible experiment inputs; keep them local.
+/experiments/forget_sets/
+/experiments/forget_sets_20260608/
+/experiments/forget_sets_eval/
+/experiments/forget_sets_eval_robustness/
+/experiments/rq_forget_sets/
+
+# Result artifacts stay local by default. Only explicitly force-added final
+# aggregate_summary.csv/json files are tracked for the GitHub upload.
+/results/
+/opengu_adapted_baselines/results/
+/opengu_adapted_baselines/archive/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Large local archives
+*.zip

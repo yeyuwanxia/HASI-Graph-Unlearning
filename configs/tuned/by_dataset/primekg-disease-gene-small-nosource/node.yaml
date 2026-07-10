@@ -1,0 +1,32 @@
+anchor_stabilization:
+  lambda1: 2.0
+  lambda2: 0.05
+
+inpainting:
+  mode: full
+  cc_drop_threshold: 0.3
+  min_damage_ratio: 0.1
+  edge_threshold: 0.5
+  max_added_edges: 256
+  repair_ratio: 0.2
+
+dar:
+  enabled: true
+  lambda2: 0.05
+
+unlearning:
+  type: node
+  edge_forget_loss_mode: original_kl
+  forget_weight: 0.2
+  finetune_epochs: 80
+  finetune_lr: 0.01
+
+# PrimeKG-DiseaseGene-Small-NoSource node tuned config.
+# Source: results/tuning/primekg-disease-gene-small-nosource/node_round2_privacy_refine_manual/runs
+# Selected config: cfg01_l2_l0p05_fw0p2_lr0p01_ep80_repair0p2
+# Mean tuning metrics over 6 tuning forget sets:
+# test_accuracy_drop_mean: 0.00619
+# test_f1_macro_drop_mean: 0.00612
+# overall_mia_auc_mean: 0.80640
+# privacy_score_mean: 0.38720
+# Note: selected as the best privacy complete-HASI node configuration; node privacy remains a hard case.

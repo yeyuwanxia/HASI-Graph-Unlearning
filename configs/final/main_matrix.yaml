@@ -1,0 +1,59 @@
+schema_version: 1
+name: final_main_matrix
+description: >
+  Final main experiment matrix for the current HASI/retrain/GraphEraser stage.
+  This matrix intentionally excludes hub deletion, DAR stress tests, and
+  ablations; those should use separate matrices.
+
+command:
+  python: ["conda", "run", "-n", "graphunlearning", "python"]
+
+datasets:
+  - cora
+  - citeseer
+  - pubmed
+
+unlearning_types:
+  node:
+    selection: random_train
+  edge:
+    selection: random_all
+  feature:
+    selection: random_all
+
+ratios:
+  - label: 0p05
+    value: 0.05
+  - label: 0p1
+    value: 0.1
+
+seeds:
+  - 42
+  - 123
+  - 2024
+
+methods:
+  - key: hasi_default
+    kind: hasi
+    config: configs/hasi_default.yaml
+  - key: hasi_tuned
+    kind: hasi
+    config_template: configs/tuned/by_dataset/{dataset}/{unlearning_type}.yaml
+  - key: retrain
+    kind: baseline
+    baseline: retrain
+  - key: grapheraser_bekm
+    kind: baseline
+    baseline: grapheraser-bekm
+  - key: grapheraser_blpa
+    kind: baseline
+    baseline: grapheraser-blpa
+
+forget_sets:
+  path_template: experiments/forget_sets/{dataset}/{dataset}_{unlearning_type}_r{ratio_label}_{selection}_seed{seed}.json
+
+outputs:
+  root: results/final/main_matrix
+  result_template: "{root}/{dataset}/{method}/{unlearning_type}/{method}_{dataset}_{unlearning_type}_r{ratio_label}_seed{seed}.json"
+  aggregate_json: "{root}/aggregate_summary.json"
+  aggregate_csv: "{root}/aggregate_summary.csv"

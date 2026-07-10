@@ -1,0 +1,68 @@
+model:
+  type: GCN
+  hidden_channels: 64
+  num_layers: 2
+  dropout: 0.5
+training:
+  seed: 42
+  epochs: 200
+  lr: 0.01
+hub_identification:
+  alpha: 0.4
+  beta: 0.3
+  gamma: 0.3
+  filter_ratio: 0.1
+  primary_ratio: 0.01
+  secondary_ratio: 0.05
+anchor_stabilization:
+  lambda1: 2.0
+  lambda2: 0.5
+erf_partitioning:
+  alpha: 0.15
+  k_steps: 3
+  threshold: 0.01
+inpainting:
+  mode: full
+  method: mgae
+  cc_drop_threshold: 0.3
+  min_damage_ratio: 0.1
+  hidden_channels: 64
+  embedding_channels: 32
+  train_epochs: 80
+  lr: 0.01
+  mask_ratio: 0.15
+  edge_threshold: 0.5
+  max_added_edges: 256
+  repair_ratio: 0.35
+  max_candidate_nodes: 512
+  max_candidate_edges: 20000
+dar:
+  enabled: true
+  k: 5
+  strategy: distributed
+  min_distance: 2
+  small_component_threshold: 10
+  gumbel_tau: 0.1
+  alpha_score: 0.6
+  beta_score: 0.4
+  max_search_radius: null
+unlearning:
+  type: feature
+  ratio: 0.1
+  forget_weight: 0.05
+  finetune_epochs: 30
+  finetune_lr: 0.01
+optimization:
+  affected_anchor_scope: erf
+  subgraph_finetune: true
+  subgraph_min_nodes: 5000
+  lazy_train_inpainter: true
+feature_unlearning:
+  drift_threshold: 0.05
+  anchor_to_h_new: true
+evaluation:
+  mia_levels:
+  - weak
+  - medium
+  - strong
+  run_structural_metrics: true

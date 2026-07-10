@@ -1,0 +1,131 @@
+{
+  "source_zip": "OpenGU-main.zip",
+  "files": [
+    {
+      "zip_member": "OpenGU-main/GULib-master/attack/Attack_methods/GNNDelete_MIA.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/attack/Attack_methods/GNNDelete_MIA.py",
+      "sha256": "ea51eaaf7495698136066edddb48181b7ebd39b55124d7fb118e77f439ad5f55",
+      "bytes": 658
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/config.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/config.py",
+      "sha256": "9b848f8d563e2c9f5f08bb34d13b14ce22014bb5fb32f98d56ed7a5adf6c4927",
+      "bytes": 4806
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/parameter_parser.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/parameter_parser.py",
+      "sha256": "d158289030a81f40b2ffb0c154333fa5a31e7e6ae6f7ec4feb170f10147a873d",
+      "bytes": 19669
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/pipeline/IF_based_pipeline.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/pipeline/IF_based_pipeline.py",
+      "sha256": "de42ce679503c2a4462a40e2c5ad8a390dd9527ab1ea9c95b637f11d6a6fd32f",
+      "bytes": 7077
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/pipeline/Learning_based_pipeline.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/pipeline/Learning_based_pipeline.py",
+      "sha256": "94f4d2e4a7a4f2821d10c82d087b4c58325625ca89ddb5b87a3e119db7d02e00",
+      "bytes": 5605
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/task/GIFTrainer.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/task/GIFTrainer.py",
+      "sha256": "b11e396d4221f64d04557afe9f5f10c9dd64731641a656a97d44ca74ed6be805",
+      "bytes": 6947
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/task/GNNDeleteTrainer.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/task/GNNDeleteTrainer.py",
+      "sha256": "23dfe8cbd2fc4604be8ccc9b0ea665ef18b316c579115a8627e9d94147fd6c16",
+      "bytes": 44473
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/task/MEGUTrainer.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/task/MEGUTrainer.py",
+      "sha256": "13de86cf452980d96068383dab3c07561a027c7ef90f81578a24749225e32ec6",
+      "bytes": 10292
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GIF/gif.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GIF/gif.py",
+      "sha256": "98eb1a238be89ddd871000eec3425e65f38dbeff06d89d1c0c30569f95dcb12d",
+      "bytes": 40854
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GNNDelete/__init__.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GNNDelete/__init__.py",
+      "sha256": "e527972ece2695fa590ebf25d8d13865a574ed1273340a5dd7a28c0d89e7c1ab",
+      "bytes": 25
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GNNDelete/gnndelete.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GNNDelete/gnndelete.py",
+      "sha256": "b69af60939425eeacb496dc71b716b7844dce0f758319289f1e4834ddf5097b6",
+      "bytes": 44309
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/aggregation/aggregator.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/aggregation/aggregator.py",
+      "sha256": "5238eae857dfefd59d694e8e038db66aa9974c090ab857dcae0e9b91689baea0",
+      "bytes": 11004
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/aggregation/edge_aggregator.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/aggregation/edge_aggregator.py",
+      "sha256": "acc79ea51eed1a42b3b70ba840d0fca65636d3cf0122a61c0862babc9011ee34",
+      "bytes": 5972
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/grapheraser.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/grapheraser.py",
+      "sha256": "f2a8727b9bfa73b9d2a8796c6e2ed3767da76486cf7d60dacdd6e0a2e131ddce",
+      "bytes": 55377
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/partition/constrained_kmeans_base.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/partition/constrained_kmeans_base.py",
+      "sha256": "0227b0048e64f8e18d443325decce4b5112f43569b3b167effc770d182f91e8b",
+      "bytes": 4389
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/partition/constrained_lpa_base.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/partition/constrained_lpa_base.py",
+      "sha256": "839d00e81d856e1fe7615ee8a2e209aa963992e5e64a3bef9def0a311f8f74f1",
+      "bytes": 8670
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/partition/graph_partition.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/partition/graph_partition.py",
+      "sha256": "091f1881f79a52d18090a18df0893950e7700dc83fe2627138433bcaa37f0e8d",
+      "bytes": 2419
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/partition/partition_kmeans.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/partition/partition_kmeans.py",
+      "sha256": "a3da94b16a345f559f98785c586e2016e30e4d3f320d8fa8ff3c52acab8029b2",
+      "bytes": 4113
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/GraphEraser/partition/partition_lpa.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/GraphEraser/partition/partition_lpa.py",
+      "sha256": "2c6e68ee30a5cb2da426a1252d4fb067b2fa16851408a673125337633bab1f3b",
+      "bytes": 3571
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/MEGU/__init__.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/MEGU/__init__.py",
+      "sha256": "8ffabd57ed51dbf7fef8d686b676c1c52ca862559fbce328b2934026a2e81346",
+      "bytes": 23
+    },
+    {
+      "zip_member": "OpenGU-main/GULib-master/unlearning/unlearning_methods/MEGU/megu.py",
+      "local_path": "opengu_adapted_baselines/vendor/opengu_selected/unlearning/unlearning_methods/MEGU/megu.py",
+      "sha256": "15c3ef7bad01a055d5492bd6fa6fc81a75bdf4e0c4a483c3282e7dad2f67c4d1",
+      "bytes": 22125
+    }
+  ]
+}
