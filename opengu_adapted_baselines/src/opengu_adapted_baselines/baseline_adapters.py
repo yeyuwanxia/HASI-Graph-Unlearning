@@ -120,7 +120,9 @@ class OpenGUAdaptedGIF(GIFBaseline):
     """OpenGU-sourced GIF adapter for local edge-forgetting experiments."""
 
     def __init__(self, config: GIFConfig | None = None):
-        super().__init__("opengu-gif", config=config or GIFConfig())
+        # Keep the adapter aligned with the bundled OpenGU parameter parser.
+        opengu_default = GIFConfig(iteration=100, scale=1_000_000_000.0, damp=0.0, hops=2)
+        super().__init__("opengu-gif", config=config or opengu_default)
 
     @property
     def provenance(self) -> dict[str, Any]:

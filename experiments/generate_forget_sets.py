@@ -26,7 +26,7 @@ from hasi.hub_identification import HubScorer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate fixed forget-set protocol files.")
-    parser.add_argument("--dataset_name", default="cora", choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
+    parser.add_argument("--dataset_name", default="cora", choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-full-nosource", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "hetionet-full-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
     parser.add_argument("--unlearning_type", default="node", choices=["node", "edge", "feature"])
     parser.add_argument("--forget_ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
@@ -57,6 +57,12 @@ def parse_args():
         default="train_subgraph",
         choices=["train_subgraph", "full"],
         help="For edge unlearning, sample from train-train edges or the full edge_index.",
+    )
+    parser.add_argument(
+        "--edge_sampling_unit",
+        default="directed_entry",
+        choices=["directed_entry", "unique_undirected"],
+        help="Sample directed edge_index entries or canonical unique undirected edges.",
     )
     parser.add_argument("--data_root", default=str(ROOT / "data" / "raw"))
     parser.add_argument("--allow_download", action="store_true", help="Allow this command to download missing datasets.")
@@ -186,6 +192,34 @@ def _select_targets(data, args):
     if args.selection not in {"random_train", "random_all"}:
         raise ValueError(f"Selection {args.selection!r} is only supported for node forget sets.")
     if args.unlearning_type == "edge":
+        edge_sampling_unit = getattr(args, "edge_sampling_unit", "directed_entry")
+        if edge_sampling_unit == "unique_undirected":
+            targets, candidate_count, directed_candidate_count = _select_unique_undirected_edges(
+                data,
+                args.forget_ratio,
+                seed=args.seed,
+                train_subgraph=args.edge_scope == "train_subgraph",
+            )
+            scope = (
+                "train_subgraph_unique_undirected_edges"
+                if args.edge_scope == "train_subgraph"
+                else "full_unique_undirected_edges"
+            )
+            protocol = _target_protocol(scope, candidate_count)
+            protocol.update(
+                {
+                    "sampling_unit": "unique_undirected_edge",
+                    "ratio_denominator": "unique_candidate_undirected_edges",
+                    "deletion_operator": "undirected_closure",
+                    "canonicalization": "min_node_id_max_node_id",
+                    "directed_candidate_entry_count": directed_candidate_count,
+                    "paper_wording": (
+                        "Sample 5%/10% of unique undirected training-subgraph edges "
+                        "and remove both stored directions of each selected edge."
+                    ),
+                }
+            )
+            return targets, protocol
         if args.edge_scope == "train_subgraph":
             targets, candidate_count = _select_train_subgraph_edges(data, args.forget_ratio, seed=args.seed)
             return targets, _target_protocol("train_subgraph_edges", candidate_count)
@@ -217,6 +251,47 @@ def _select_train_subgraph_edges(data, ratio: float, *, seed: int) -> tuple[list
     order = torch.randperm(candidate_count, generator=generator)[:count]
     selected = candidates[order].tolist()
     return [(int(edge_index[0, idx]), int(edge_index[1, idx])) for idx in selected], candidate_count
+
+
+def _select_unique_undirected_edges(
+    data,
+    ratio: float,
+    *,
+    seed: int,
+    train_subgraph: bool,
+) -> tuple[list[tuple[int, int]], int, int]:
+    import torch
+
+    edge_index = data.edge_index.detach().cpu()
+    keep = torch.ones(edge_index.shape[1], dtype=torch.bool)
+    if train_subgraph:
+        train_mask = getattr(data, "train_mask", None)
+        if train_mask is None:
+            raise ValueError("train_subgraph edge selection requires data.train_mask.")
+        if train_mask.dim() > 1:
+            train_mask = train_mask[:, 0]
+        train_mask = train_mask.detach().cpu().to(dtype=torch.bool)
+        keep = train_mask[edge_index[0]] & train_mask[edge_index[1]]
+
+    selected_indices = torch.nonzero(keep, as_tuple=False).view(-1).tolist()
+    directed_candidate_count = len(selected_indices)
+    candidates = sorted(
+        {
+            (min(int(edge_index[0, idx]), int(edge_index[1, idx])),
+             max(int(edge_index[0, idx]), int(edge_index[1, idx])))
+            for idx in selected_indices
+        }
+    )
+    candidate_count = len(candidates)
+    count = _sample_count(candidate_count, ratio)
+    if count <= 0:
+        return [], candidate_count, directed_candidate_count
+
+    generator = torch.Generator()
+    generator.manual_seed(int(seed))
+    order = torch.randperm(candidate_count, generator=generator)[:count].tolist()
+    targets = [candidates[idx] for idx in order]
+    return targets, candidate_count, directed_candidate_count
 
 
 def _ranked_train_nodes(data, ratio: float, *, ranking: str) -> tuple[list[int], dict[str, Any]]:

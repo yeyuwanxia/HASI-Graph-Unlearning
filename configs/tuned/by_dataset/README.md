@@ -18,6 +18,10 @@ configs/tuned/by_dataset/
     node.yaml
     edge.yaml
     feature.yaml
+  hetionet-full-nosource/
+    node.yaml
+    edge.yaml
+    feature.yaml
   primekg-disease-gene-small/
     edge.yaml
     feature.yaml
@@ -30,6 +34,8 @@ Selection notes:
 - `pubmed/node.yaml` reuses the node tuned configuration because PubMed node was not separately tuned.
 - `pubmed/edge.yaml` uses the PubMed-selected edge configuration from `results/tuning/pubmed/edge/repair32_anchor1p0_0p2_forget000`.
 - `pubmed/feature.yaml` uses the PubMed-selected feature configuration from `results/tuning/pubmed/feature/drift1e2_lowforget005`.
+
+- `hetionet-full-nosource/*` contains configurations tuned on `hetionet-small-nosource` and transferred unchanged to the full homogeneous projection. The original small-dataset tuning paths remain recorded in each YAML; these are transferred configurations, not full-dataset retuning outputs.
 
 - `primekg-disease-gene-small/edge.yaml` keeps the default HASI configuration because the edge privacy-refine sweep did not improve the validation privacy-utility trade-off over default.
 - `primekg-disease-gene-small/feature.yaml` uses the selected feature configuration from `results/tuning/primekg-disease-gene-small/feature/best_config.yaml`.

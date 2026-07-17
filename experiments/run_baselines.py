@@ -21,8 +21,15 @@ from data import (
     select_forget_edges,
     select_forget_features,
     select_forget_nodes,
+    with_protocol_semantics,
 )
-from evaluation import build_experiment_metrics, default_metrics_path, save_metrics
+from evaluation import (
+    build_experiment_metrics,
+    default_metrics_path,
+    load_exact_retrain_reference,
+    save_exact_retrain_reference,
+    save_metrics,
+)
 from evaluation.metrics import json_safe
 from utils import RuntimeTracker
 from models import (
@@ -40,7 +47,7 @@ def parse_args():
     parser.add_argument("--list_baselines", action="store_true", help="List registered baselines and exit.")
     parser.add_argument("--data_root", default=str(ROOT / "data" / "raw"))
     parser.add_argument("--allow_download", action="store_true", help="Allow this command to download missing datasets.")
-    parser.add_argument("--dataset_name", default="cora", choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
+    parser.add_argument("--dataset_name", default="cora", choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-full-nosource", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "hetionet-full-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
     parser.add_argument("--unlearning_type", default="node", choices=["node", "edge", "feature"])
     parser.add_argument("--forget_ratio", type=float, default=0.1)
     parser.add_argument("--forget_nodes", default="")
@@ -59,6 +66,8 @@ def parse_args():
     parser.add_argument("--base_artifact_dir", default="", help="Explicit shared base artifact directory for this run.")
     parser.add_argument("--grapheraser_artifact_dir", default="", help="Offline GraphEraser artifact directory for online unlearning.")
     parser.add_argument("--output", default=None, help="Metrics JSON path. Defaults to results/baselines/<baseline>/<baseline>_*.json.")
+    parser.add_argument("--save_exact_retrain_reference", default="", help="Save retrain logits/embeddings as a reusable reference artifact.")
+    parser.add_argument("--exact_retrain_reference", default="", help="Load a matching exact-retrain reference for Edge diagnostics.")
     return parser.parse_args()
 
 
@@ -175,6 +184,45 @@ def main():
         with timer.track("predict"):
             logits_after, embeddings_after = after_trainer.predict_with_embeddings(result.data)
 
+    exact_reference_payload = None
+    if args.save_exact_retrain_reference and args.exact_retrain_reference:
+        raise SystemExit("Use only one of --save_exact_retrain_reference and --exact_retrain_reference.")
+    if args.save_exact_retrain_reference:
+        if args.baseline.lower() != "retrain" or args.unlearning_type != "edge":
+            raise SystemExit("--save_exact_retrain_reference requires --baseline retrain --unlearning_type edge.")
+        if not forget_set_info.get("path"):
+            raise SystemExit("--save_exact_retrain_reference requires --forget_set_file.")
+        with timer.track("save_exact_retrain_reference"):
+            reference_metadata = save_exact_retrain_reference(
+                args.save_exact_retrain_reference,
+                logits=logits_after,
+                embeddings=embeddings_after,
+                dataset=bundle.name,
+                unlearning_type=args.unlearning_type,
+                forget_set_path=forget_set_info["path"],
+                base_artifact_path=base_artifact_dir,
+                seed=args.seed,
+                model_config=model_config,
+                training=result.training,
+            )
+        exact_reference_payload = {
+            "metadata": reference_metadata,
+            "logits": logits_after,
+            "embeddings": embeddings_after,
+            "path": args.save_exact_retrain_reference,
+        }
+    elif args.exact_retrain_reference:
+        if args.unlearning_type != "edge" or not forget_set_info.get("path"):
+            raise SystemExit("--exact_retrain_reference requires Edge --forget_set_file input.")
+        with timer.track("load_exact_retrain_reference"):
+            exact_reference_payload = load_exact_retrain_reference(
+                args.exact_retrain_reference,
+                dataset=bundle.name,
+                unlearning_type=args.unlearning_type,
+                forget_set_path=forget_set_info["path"],
+                base_artifact_path=base_artifact_dir,
+            )
+
     offline_preprocessing_seconds = None
     if isinstance(result.training, dict):
         artifact_info = result.training.get("artifact")
@@ -198,6 +246,16 @@ def main():
             online_wall_clock_seconds=timer.total,
             time_breakdown=timer.times,
             offline_preprocessing_seconds=offline_preprocessing_seconds,
+            mia_seed=int(forget_set_info.get("seed", args.seed) or 0),
+            exact_retrain_logits=(exact_reference_payload or {}).get("logits"),
+            exact_retrain_embeddings=(exact_reference_payload or {}).get("embeddings"),
+            exact_retrain_reference=(
+                {
+                    **(exact_reference_payload or {}).get("metadata", {}),
+                    "path": (exact_reference_payload or {}).get("path"),
+                }
+                if exact_reference_payload else None
+            ),
         )
         metrics.pop("rq_summary", None)
 
@@ -208,6 +266,11 @@ def main():
         "base_training": base_training,
         "base_artifact": _base_artifact_result(base_artifact_dir, base_artifact_metadata),
         "grapheraser_artifact": _grapheraser_artifact_result(grapheraser_artifact_dir, result.training),
+        "exact_retrain_reference": {
+            "loaded": exact_reference_payload is not None,
+            "path": (exact_reference_payload or {}).get("path"),
+            "metadata": (exact_reference_payload or {}).get("metadata"),
+        },
         "result": result.as_dict(),
         "metrics": metrics,
     }
@@ -347,6 +410,7 @@ def _resolve_forget_targets(args, data, dataset_name: str):
         "unlearning_type": args.unlearning_type,
         "ratio": args.forget_ratio,
         "targets": targets,
+        "protocol": with_protocol_semantics(args.unlearning_type, None),
     }
 
 

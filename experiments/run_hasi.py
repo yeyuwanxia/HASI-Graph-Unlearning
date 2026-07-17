@@ -21,12 +21,18 @@ from data import (
     select_forget_edges,
     select_forget_features,
     select_forget_nodes,
+    with_protocol_semantics,
 )
-from evaluation import build_experiment_metrics, default_metrics_path, save_metrics
+from evaluation import (
+    build_experiment_metrics,
+    default_metrics_path,
+    load_exact_retrain_reference,
+    save_metrics,
+)
 from evaluation.metrics import json_safe
 from hasi import HASIConfig, HASIUnlearner
 from hasi.dar import DARConfig
-from hasi.hub_identification import HubScoreConfig
+from hasi.hub_identification import HubScoreCache, HubScoreConfig, hub_cache_identity
 from utils import RuntimeTracker
 from models import (
     GNNTrainer,
@@ -42,8 +48,12 @@ def parse_args():
     parser.add_argument("--config", default=str(ROOT / "configs" / "hasi_default.yaml"), help="YAML config path.")
     parser.add_argument("--data_root", default=str(ROOT / "data" / "raw"))
     parser.add_argument("--allow_download", action="store_true", help="Allow this command to download missing datasets.")
-    parser.add_argument("--dataset_name", default=None, choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
-    parser.add_argument("--mode", default="plan", choices=["plan", "unlearn"])
+    parser.add_argument("--dataset_name", default=None, choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-full-nosource", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "hetionet-full-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
+    parser.add_argument(
+        "--mode",
+        default="plan",
+        choices=["plan", "unlearn", "prepare_hub_scores"],
+    )
     parser.add_argument("--unlearning_type", default=None, choices=["node", "edge", "feature"])
     parser.add_argument("--forget_ratio", type=float, default=None)
     parser.add_argument("--forget_nodes", default="", help="Comma-separated node ids.")
@@ -124,17 +134,41 @@ def parse_args():
     parser.add_argument("--edge_forget_loss_mode", default=None, choices=["original_kl", "uniform", "none"])
     parser.add_argument(
         "--gradient_hub_score",
+        "--gradient-hub-score",
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Use task-gradient sensitivity in HubScore. Defaults to on for unlearn mode and off for plan mode.",
     )
     parser.add_argument("--gradient_hub_passes", type=int, default=1)
+    parser.add_argument("--hub_ppr_batch_size", type=int, default=None)
     parser.add_argument("--gradient_hub_dropout", action="store_true", help="Average gradient scores with dropout enabled.")
+    parser.add_argument(
+        "--hub_score_cache",
+        "--hub-score-cache",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Reuse content-addressed HubScore values across runs sharing the same base model and graph.",
+    )
+    parser.add_argument("--hub_score_cache_root", default=None)
+    parser.add_argument(
+        "--require_hub_score_cache_hit",
+        "--require-hub-score-cache-hit",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Fail before unlearning when the content-addressed HubScore artifact is missing.",
+    )
+    parser.add_argument(
+        "--graph_compute_backend",
+        choices=["auto", "cpu", "torch"],
+        default=None,
+        help="Backend for fixed-step PPR and exact DAR BFS. auto uses torch only on CUDA.",
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument("--base_artifact_root", default="", help="Root containing shared base artifacts as <root>/<dataset>/seed<seed>.")
     parser.add_argument("--base_artifact_dir", default="", help="Explicit shared base artifact directory for this run.")
     parser.add_argument("--method_name", default="hasi", help="Method label stored in output metrics.")
     parser.add_argument("--output", default=None, help="Metrics JSON path. Defaults to results/hasi/hasi_*.json.")
+    parser.add_argument("--exact_retrain_reference", default="", help="Matching exact-retrain artifact for Edge diagnostics.")
     return parser.parse_args()
 
 
@@ -190,12 +224,21 @@ def main():
             config=hasi_config,
         )
 
-    with timer.track("load_forget_set"):
-        forget_targets, forget_set_info = _resolve_forget_targets(args, data, bundle.name)
+    if args.mode == "prepare_hub_scores":
+        forget_targets = []
+        forget_set_info = {
+            "dataset": bundle.name,
+            "unlearning_type": args.unlearning_type,
+            "source": "not_applicable_for_hub_score_preparation",
+            "targets": [],
+        }
+    else:
+        with timer.track("load_forget_set"):
+            forget_targets, forget_set_info = _resolve_forget_targets(args, data, bundle.name)
 
     use_gradient_hub_score = args.gradient_hub_score
     if use_gradient_hub_score is None:
-        use_gradient_hub_score = args.mode == "unlearn"
+        use_gradient_hub_score = args.mode in {"unlearn", "prepare_hub_scores"}
 
     result = {
         "dataset": bundle.name,
@@ -212,7 +255,7 @@ def main():
         },
         "base_artifact": _base_artifact_result(base_artifact_dir, base_artifact_metadata),
     }
-    if args.mode == "plan":
+    if args.mode in {"plan", "prepare_hub_scores"}:
         with timer.track("prepare"):
             if use_gradient_hub_score:
                 result["base_training"] = _ensure_base_model(
@@ -221,17 +264,22 @@ def main():
                     args.train_epochs,
                     base_artifact_metadata,
                 )
-                gradient_scores = trainer.gradient_sensitivity(
-                    data,
-                    passes=args.gradient_hub_passes,
-                    use_dropout=args.gradient_hub_dropout,
-                )
-                result["gradient_hub_scoring"]["num_scored_nodes"] = len(gradient_scores)
-            else:
-                gradient_scores = None
-            summary = unlearner.preprocess(gradient_scores=gradient_scores)
+            summary = _preprocess_with_hub_cache(
+                args,
+                result,
+                unlearner,
+                trainer,
+                data,
+                bundle.name,
+                use_gradient_hub_score,
+            )
             result["preprocess"] = summary
-            if args.unlearning_type == "node":
+            if args.mode == "prepare_hub_scores":
+                result["artifact_preparation"] = {
+                    "status": "ready",
+                    "artifact_type": "hasi_hub_scores",
+                }
+            elif args.unlearning_type == "node":
                 result["plan"] = unlearner.plan_node_unlearning(forget_targets)
             else:
                 result["plan"] = {
@@ -239,6 +287,10 @@ def main():
                     "forget_targets": forget_targets,
                     "status": "planning is implemented for node unlearning",
                 }
+        if args.output:
+            result["artifact_manifest_path"] = str(
+                _save_plan_manifest(result, Path(args.output), timer)
+            )
     else:
         with timer.track("prepare"):
             result["base_training"] = _ensure_base_model(
@@ -247,15 +299,15 @@ def main():
                 args.train_epochs,
                 base_artifact_metadata,
             )
-            gradient_scores = None
-            if use_gradient_hub_score:
-                gradient_scores = trainer.gradient_sensitivity(
-                    data,
-                    passes=args.gradient_hub_passes,
-                    use_dropout=args.gradient_hub_dropout,
-                )
-                result["gradient_hub_scoring"]["num_scored_nodes"] = len(gradient_scores)
-            summary = unlearner.preprocess(gradient_scores=gradient_scores)
+            summary = _preprocess_with_hub_cache(
+                args,
+                result,
+                unlearner,
+                trainer,
+                data,
+                bundle.name,
+                use_gradient_hub_score,
+            )
             result["preprocess"] = summary
             anchor_nodes_for_metrics = _anchor_nodes_from_unlearner(unlearner)
         if logits_before is None or embeddings_before is None:
@@ -292,6 +344,24 @@ def main():
 
         with timer.track("predict"):
             logits_after, embeddings_after = trainer.predict_with_embeddings(unlearner.data)
+        exact_reference_payload = None
+        if args.exact_retrain_reference:
+            if args.unlearning_type != "edge" or not forget_set_info.get("path"):
+                raise SystemExit("--exact_retrain_reference requires Edge --forget_set_file input.")
+            with timer.track("load_exact_retrain_reference"):
+                exact_reference_payload = load_exact_retrain_reference(
+                    args.exact_retrain_reference,
+                    dataset=bundle.name,
+                    unlearning_type=args.unlearning_type,
+                    forget_set_path=forget_set_info["path"],
+                    base_artifact_path=base_artifact_dir,
+                )
+        result["exact_retrain_reference"] = {
+            "loaded": exact_reference_payload is not None,
+            "path": (exact_reference_payload or {}).get("path"),
+            "metadata": (exact_reference_payload or {}).get("metadata"),
+        }
+
         with timer.track("evaluate"):
             result["metrics"] = build_experiment_metrics(
                 method=args.method_name,
@@ -307,8 +377,21 @@ def main():
                 unlearn_time_seconds=unlearn_time,
                 online_wall_clock_seconds=timer.total,
                 time_breakdown=timer.times,
+                offline_preprocessing_seconds=result.get("hub_score_cache", {}).get(
+                    "offline_preprocessing_seconds"
+                ),
                 primary_anchor_nodes=anchor_nodes_for_metrics["primary"],
                 secondary_anchor_nodes=anchor_nodes_for_metrics["secondary"],
+                mia_seed=int(forget_set_info.get("seed", args.seed) or 0),
+                exact_retrain_logits=(exact_reference_payload or {}).get("logits"),
+                exact_retrain_embeddings=(exact_reference_payload or {}).get("embeddings"),
+                exact_retrain_reference=(
+                    {
+                        **(exact_reference_payload or {}).get("metadata", {}),
+                        "path": (exact_reference_payload or {}).get("path"),
+                    }
+                    if exact_reference_payload else None
+                ),
             )
             result["metrics"].pop("rq_summary", None)
         output_path = Path(args.output) if args.output else default_metrics_path(
@@ -323,6 +406,96 @@ def main():
         result["metrics_path"] = str(_save_with_runtime(result, output_path, timer))
 
     print(json.dumps(json_safe(result), indent=2))
+
+
+def _preprocess_with_hub_cache(
+    args,
+    result: dict[str, Any],
+    unlearner: HASIUnlearner,
+    trainer: GNNTrainer,
+    data,
+    dataset_name: str,
+    use_gradient_hub_score: bool,
+) -> dict[str, Any]:
+    cache = HubScoreCache(args.hub_score_cache_root) if args.hub_score_cache else None
+    if args.require_hub_score_cache_hit and cache is None:
+        raise RuntimeError("--require-hub-score-cache-hit requires --hub-score-cache")
+    identity = None
+    if cache is not None:
+        identity = hub_cache_identity(
+            dataset=dataset_name,
+            training_seed=args.seed,
+            data=data,
+            model=trainer.model,
+            hub_config=unlearner.config.hub_identification,
+            gradient_enabled=use_gradient_hub_score,
+            gradient_passes=args.gradient_hub_passes,
+            gradient_dropout=args.gradient_hub_dropout,
+        )
+        lookup = cache.lookup(identity)
+        if lookup.hit and lookup.scores is not None:
+            result["hub_score_cache"] = lookup.as_dict()
+            result["gradient_hub_scoring"]["computation_skipped_due_to_cache"] = bool(
+                use_gradient_hub_score
+            )
+            return unlearner.preprocess(precomputed_hub_scores=lookup.scores)
+        result["hub_score_cache"] = lookup.as_dict()
+        if args.require_hub_score_cache_hit:
+            raise RuntimeError(
+                "Required HubScore artifact is unavailable: "
+                f"key={lookup.key} path={lookup.path} reason={lookup.reason}"
+            )
+    else:
+        result["hub_score_cache"] = {
+            "enabled": False,
+            "hit": False,
+            "key": None,
+            "path": None,
+            "reason": "disabled",
+            "offline_preprocessing_seconds": None,
+            "artifact_metadata": {},
+        }
+
+    build_start = time.perf_counter()
+    gradient_scores = None
+    if use_gradient_hub_score:
+        gradient_scores = trainer.gradient_sensitivity(
+            data,
+            passes=args.gradient_hub_passes,
+            use_dropout=args.gradient_hub_dropout,
+        )
+        result["gradient_hub_scoring"]["num_scored_nodes"] = len(gradient_scores)
+        result["gradient_hub_scoring"]["computation_skipped_due_to_cache"] = False
+    summary = unlearner.preprocess(gradient_scores=gradient_scores)
+    build_seconds = time.perf_counter() - build_start
+
+    if cache is not None and identity is not None:
+        stored = cache.store(
+            identity,
+            unlearner.hub_scores,
+            build_seconds=build_seconds,
+            metadata=_hub_score_artifact_metadata(args, trainer),
+        )
+        result["hub_score_cache"] = stored.as_dict()
+    return summary
+
+
+def _hub_score_artifact_metadata(args, trainer: GNNTrainer) -> dict[str, Any]:
+    import torch
+
+    return {
+        "artifact_type": "hasi_hub_scores",
+        "producer": "experiments/run_hasi.py",
+        "implementation_version": "hub_score_cache_schema_v2_torch_ppr_v1",
+        "training_seed": int(args.seed),
+        "device": str(getattr(trainer, "device", args.device)),
+        "torch_version": str(torch.__version__),
+        "cuda_runtime": str(torch.version.cuda) if torch.version.cuda is not None else None,
+        "graph_compute_backend": str(args.graph_compute_backend),
+        "gradient_hub_passes": int(args.gradient_hub_passes),
+        "gradient_hub_dropout": bool(args.gradient_hub_dropout),
+        "hub_ppr_batch_size": int(args.hub_ppr_batch_size),
+    }
 
 
 def _anchor_nodes_from_unlearner(unlearner: HASIUnlearner) -> dict[str, list[int]]:
@@ -419,6 +592,16 @@ def _save_with_runtime(result: dict[str, Any], output_path: Path, timer: Runtime
     return save_metrics(result, output_path)
 
 
+def _save_plan_manifest(result: dict[str, Any], output_path: Path, timer: RuntimeTracker) -> Path:
+    result["artifact_manifest_path"] = str(output_path)
+    start = time.perf_counter()
+    save_metrics(result, output_path)
+    timer.add("save", time.perf_counter() - start)
+    timer.end_total()
+    result["runtime"] = timer.to_dict()
+    return save_metrics(result, output_path)
+
+
 def _load_yaml_config(path: str | None) -> tuple[dict[str, Any], Path | None]:
     if not path:
         return {}, None
@@ -471,6 +654,16 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
     args.forget_weight = _arg(args, "forget_weight", unlearning_cfg.get("forget_weight", 0.0))
     args.edge_forget_loss_mode = _arg(args, "edge_forget_loss_mode", unlearning_cfg.get("edge_forget_loss_mode", "original_kl"))
 
+    args.graph_compute_backend = _arg(
+        args,
+        "graph_compute_backend",
+        optimization_cfg.get("graph_compute_backend", "auto"),
+    )
+    args.hub_ppr_batch_size = _arg(
+        args,
+        "hub_ppr_batch_size",
+        optimization_cfg.get("hub_ppr_batch_size", 64),
+    )
     hub_config = HubScoreConfig(
         alpha=_arg(args, "hub_alpha", hub_cfg.get("alpha", 0.4)),
         beta=_arg(args, "hub_beta", hub_cfg.get("beta", 0.3)),
@@ -478,6 +671,12 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
         filter_ratio=_arg(args, "hub_filter_ratio", hub_cfg.get("filter_ratio", 0.1)),
         primary_ratio=_arg(args, "primary_ratio", hub_cfg.get("primary_ratio", 0.01)),
         secondary_ratio=_arg(args, "secondary_ratio", hub_cfg.get("secondary_ratio", 0.05)),
+        ppr_alpha=float(hub_cfg.get("ppr_alpha", 0.15)),
+        ppr_max_iter=int(hub_cfg.get("ppr_max_iter", 50)),
+        ppr_tol=float(hub_cfg.get("ppr_tol", 1e-6)),
+        compute_backend=args.graph_compute_backend,
+        compute_device=args.device,
+        ppr_batch_size=args.hub_ppr_batch_size,
     )
     args.anchor_lambda1 = _arg(args, "anchor_lambda1", anchor_cfg.get("lambda1", 2.0))
     args.anchor_lambda2 = _arg(args, "anchor_lambda2", anchor_cfg.get("lambda2", 0.5))
@@ -485,6 +684,17 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
     args.erf_alpha = _arg(args, "erf_alpha", erf_cfg.get("alpha", 0.15))
     args.erf_k_steps = _arg(args, "erf_k_steps", erf_cfg.get("k_steps", 3))
     args.erf_threshold = _arg(args, "erf_threshold", erf_cfg.get("threshold", 0.01))
+    args.hub_score_cache = _arg(args, "hub_score_cache", optimization_cfg.get("hub_score_cache", True))
+    args.hub_score_cache_root = _arg(
+        args,
+        "hub_score_cache_root",
+        optimization_cfg.get("hub_score_cache_root", str(ROOT / "results" / "cache" / "hub_scores")),
+    )
+    args.require_hub_score_cache_hit = _arg(
+        args,
+        "require_hub_score_cache_hit",
+        optimization_cfg.get("require_hub_score_cache_hit", False),
+    )
 
     args.inpainting_mode = _arg(args, "inpainting_mode", inpainting_cfg.get("mode", "full"))
     args.inpainting_method = _arg(args, "inpainting_method", inpainting_cfg.get("method", "mgae"))
@@ -514,6 +724,8 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
         beta_score=_arg(args, "dar_beta_score", dar_cfg.get("beta_score", 0.4)),
         max_search_radius=_arg(args, "dar_max_search_radius", dar_cfg.get("max_search_radius", None)),
         seed=args.seed,
+        compute_backend=args.graph_compute_backend,
+        device=args.device,
     )
     args.subgraph_finetune = _arg(args, "subgraph_finetune", optimization_cfg.get("subgraph_finetune", True))
     args.subgraph_min_nodes = _arg(args, "subgraph_min_nodes", optimization_cfg.get("subgraph_min_nodes", 5000))
@@ -551,6 +763,8 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
         subgraph_min_nodes=args.subgraph_min_nodes,
         feature_drift_threshold=args.feature_drift_threshold,
         feature_anchor_to_h_new=args.feature_anchor_to_h_new,
+        graph_compute_backend=args.graph_compute_backend,
+        graph_compute_device=args.device,
     )
     resolved = {
         "model": {
@@ -587,6 +801,12 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
         "optimization": {
             "subgraph_finetune": args.subgraph_finetune,
             "subgraph_min_nodes": args.subgraph_min_nodes,
+            "graph_compute_backend": args.graph_compute_backend,
+            "graph_compute_device": args.device,
+            "hub_ppr_batch_size": args.hub_ppr_batch_size,
+            "hub_score_cache": args.hub_score_cache,
+            "hub_score_cache_root": args.hub_score_cache_root,
+            "require_hub_score_cache_hit": args.require_hub_score_cache_hit,
         },
         "feature_unlearning": {
             "drift_threshold": args.feature_drift_threshold,
@@ -693,6 +913,7 @@ def _resolve_forget_targets(args, data, dataset_name: str):
         "candidate_scope": candidate_scope,
         "candidate_count": candidate_count,
         "targets": targets,
+        "protocol": with_protocol_semantics(args.unlearning_type, None),
     }
     if args.unlearning_type == "edge":
         info["edge_forget_scope"] = args.edge_forget_scope

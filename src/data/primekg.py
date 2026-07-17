@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -9,10 +10,12 @@ import torch
 
 
 PRIMEKG_VARIANT = "primekg_homo"
+PRIMEKG_FULL_NOSOURCE_VARIANT = "primekg_full_nosource"
 PRIMEKG_DISEASE_GENE_SMALL_VARIANT = "primekg_disease_gene_small"
 PRIMEKG_DISEASE_GENE_SMALL_NOSOURCE_VARIANT = "primekg_disease_gene_small_nosource"
 RAW_FILE = "primekg.tab"
 PROCESSED_DIR = "processed"
+FULL_NOSOURCE_PROCESSED_DIR = "processed_full_nosource"
 DISEASE_GENE_SMALL_PROCESSED_DIR = "processed_disease_gene_small"
 DISEASE_GENE_SMALL_NOSOURCE_PROCESSED_DIR = "processed_disease_gene_small_nosource"
 DATA_FILE = "data.pt"
@@ -22,6 +25,11 @@ METADATA_FILE = "metadata.json"
 def primekg_cache_paths(root: str | Path) -> list[Path]:
     base = _primekg_root(root)
     return [base / PROCESSED_DIR, base]
+
+
+def primekg_full_nosource_cache_paths(root: str | Path) -> list[Path]:
+    base = _primekg_root(root)
+    return [base / FULL_NOSOURCE_PROCESSED_DIR, base]
 
 
 def primekg_disease_gene_small_cache_paths(root: str | Path) -> list[Path]:
@@ -216,6 +224,90 @@ def load_primekg_homo(
         "num_features": int(x.shape[1]),
         "num_classes": int(len(class_mapping)),
     }
+
+    processed.mkdir(parents=True, exist_ok=True)
+    torch.save(data, data_path)
+    metadata_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return data, metadata
+
+
+def load_primekg_full_nosource(
+    root: str | Path,
+    *,
+    min_class_count: int = 20,
+    make_undirected: bool = True,
+    deduplicate_edges: bool = True,
+    remove_self_loops: bool = True,
+    force_rebuild: bool = False,
+    chunksize: int = 500_000,
+):
+    """Load the full PrimeKG graph without source-derived input features.
+
+    This variant preserves the full graph, node ordering, and labels from
+    ``load_primekg_homo``. It removes source one-hot and relation-type count
+    features because both are strongly correlated with the node-type label.
+    """
+
+    base = _primekg_root(root)
+    processed = base / FULL_NOSOURCE_PROCESSED_DIR
+    data_path = processed / DATA_FILE
+    metadata_path = processed / METADATA_FILE
+    if data_path.exists() and metadata_path.exists() and not force_rebuild:
+        data = torch.load(data_path, map_location="cpu", weights_only=False)
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        return data, metadata
+
+    source_data, source_metadata = load_primekg_homo(
+        root,
+        min_class_count=min_class_count,
+        make_undirected=make_undirected,
+        deduplicate_edges=deduplicate_edges,
+        remove_self_loops=remove_self_loops,
+        force_rebuild=False,
+        chunksize=chunksize,
+    )
+    relation_width = len(source_metadata.get("relation_mapping", {}))
+    source_width = len(source_metadata.get("source_mapping", {}))
+    retained_width = 3
+    expected_width = retained_width + relation_width + source_width
+    actual_width = int(source_data.x.shape[1])
+    if actual_width != expected_width:
+        raise ValueError(
+            "PrimeKG feature schema does not match the expected "
+            f"3 + relation({relation_width}) + source({source_width}) layout: "
+            f"actual={actual_width}, expected={expected_width}"
+        )
+
+    data = source_data.clone()
+    data.x = source_data.x[:, :retained_width].clone()
+    if hasattr(data, "primekg_node_source"):
+        del data.primekg_node_source
+
+    metadata = deepcopy(source_metadata)
+    metadata.update(
+        {
+            "dataset": "primekg-full-nosource",
+            "dataset_variant": PRIMEKG_FULL_NOSOURCE_VARIANT,
+            "processed_data": str(data_path),
+            "derived_from_processed_data": source_metadata.get("processed_data"),
+            "feature_schema": [
+                "log_processed_degree",
+                "log_raw_in_degree",
+                "log_raw_out_degree",
+            ],
+            "feature_note": (
+                "Entity-type one-hot, node-source one-hot, and relation-type counts "
+                "are intentionally excluded because y is entity type and both "
+                "source and relation semantics are label-correlated."
+            ),
+            "feature_protocol": "structure_only_v1",
+            "source_feature_removed": True,
+            "removed_source_feature_count": int(source_width),
+            "relation_type_features_removed": True,
+            "removed_relation_feature_count": int(relation_width),
+            "num_features": int(data.x.shape[1]),
+        }
+    )
 
     processed.mkdir(parents=True, exist_ok=True)
     torch.save(data, data_path)

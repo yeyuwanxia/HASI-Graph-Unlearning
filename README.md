@@ -7,7 +7,8 @@ result aggregation.
 
 ## Layout
 
-- `docs/`: HASI project overview, method reference, and medical graph story line.
+- `docs/`: HASI project overview, method reference, GPU graph-compute notes,
+  medical graph story line, and frozen edge/feature evaluation semantics.
 - `configs/`: YAML experiment configuration, including `hasi_default.yaml`.
 - `src/hasi/`: HASI modules: GHI, AS, EDP, GSI, DAR, and the unlearner.
 - `src/models/`: GCN, GAT, GraphSAGE, and training utilities.

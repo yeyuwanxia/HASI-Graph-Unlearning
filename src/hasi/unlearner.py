@@ -48,6 +48,8 @@ class HASIConfig:
     subgraph_min_nodes: int = 5000
     feature_drift_threshold: float = 1e-6
     feature_anchor_to_h_new: bool = True
+    graph_compute_backend: str = "auto"
+    graph_compute_device: Optional[str] = None
 
 
 class HASIUnlearner:
@@ -66,7 +68,13 @@ class HASIUnlearner:
             primary_ratio=self.config.hub_identification.primary_ratio,
             secondary_ratio=self.config.hub_identification.secondary_ratio,
         )
-        self.ppr = PPRComputer(self.config.erf_alpha, self.config.erf_k_steps, self.config.erf_threshold)
+        self.ppr = PPRComputer(
+            self.config.erf_alpha,
+            self.config.erf_k_steps,
+            self.config.erf_threshold,
+            backend=self.config.graph_compute_backend,
+            device=self.config.graph_compute_device,
+        )
         self.inpainter = StructuralInpainter(
             mode=self.config.inpainting_mode,
             method=self.config.inpainting_method,
@@ -87,10 +95,27 @@ class HASIUnlearner:
         self.privacy_evaluator = PrivacyEvaluator()
         self.hub_scores: Dict[int, float] = {}
 
-    def preprocess(self, gradient_scores: Optional[Dict[int, float]] = None) -> Dict[str, Any]:
+    def preprocess(
+        self,
+        gradient_scores: Optional[Dict[int, float]] = None,
+        *,
+        precomputed_hub_scores: Optional[Dict[int, float]] = None,
+    ) -> Dict[str, Any]:
         if self.graph is None:
             raise ValueError("HASIUnlearner needs a NetworkX graph or data with edge_index")
-        self.hub_scores = self.hub_scorer.compute_hub_scores(self.graph, gradient_scores=gradient_scores)
+        if precomputed_hub_scores is None:
+            self.hub_scores = self.hub_scorer.compute_hub_scores(self.graph, gradient_scores=gradient_scores)
+            hub_score_source = "computed"
+        else:
+            expected_nodes = {int(node) for node in self.graph.nodes}
+            provided_nodes = {int(node) for node in precomputed_hub_scores}
+            if expected_nodes != provided_nodes:
+                raise ValueError(
+                    "Cached HubScore node set mismatch: "
+                    f"expected {len(expected_nodes)}, received {len(provided_nodes)}"
+                )
+            self.hub_scores = {int(node): float(score) for node, score in precomputed_hub_scores.items()}
+            hub_score_source = "cache"
         if self._anchor_enabled():
             anchors = self.anchor_manager.classify_from_scores(self.hub_scores)
         else:
@@ -104,6 +129,10 @@ class HASIUnlearner:
             "num_primary": len(anchors.primary),
             "num_secondary": len(anchors.secondary),
             "num_regular": len(anchors.regular),
+            "hub_score_source": hub_score_source,
+            "hub_score_compute": dict(self.hub_scorer.last_diagnostics),
+            "graph_compute_backend": self.config.graph_compute_backend,
+            "graph_compute_device": self.config.graph_compute_device,
         }
 
     def plan_node_unlearning(self, forget_nodes: Iterable[int]) -> Dict[str, Any]:
@@ -113,7 +142,12 @@ class HASIUnlearner:
             primary_forget = [node for node in forget_nodes if node in self.anchor_manager.anchors.primary]
         else:
             primary_forget = []
-        affected_region = self.ppr.affected_region(self.graph, forget_nodes)
+        affected_region = self.ppr.affected_region(
+            self.graph,
+            forget_nodes,
+            excluded_nodes=forget_nodes,
+        )
+        affected_region_diagnostics = dict(self.ppr.last_diagnostics)
 
         dar_contexts = []
         if self._anchor_enabled() and self.config.dar.enabled:
@@ -131,6 +165,7 @@ class HASIUnlearner:
             "forget_nodes": forget_nodes,
             "primary_forget_nodes": primary_forget,
             "affected_region": sorted(affected_region),
+            "affected_region_diagnostics": affected_region_diagnostics,
             "dar_enabled": bool(self._anchor_enabled() and self.config.dar.enabled),
             "dar_contexts": dar_contexts,
             "dar_anchors": [],
@@ -174,6 +209,7 @@ class HASIUnlearner:
 
         data_after = self._replace_edge_index_from_graph(data_after, graph_after)
         dar_anchors = []
+        self.dar.clear_distance_cache()
         for context in plan["dar_contexts"]:
             dar_anchors.extend(self.dar.run_phase2(context, graph_after))
 
@@ -206,6 +242,7 @@ class HASIUnlearner:
             primary_forget_nodes=plan["primary_forget_nodes"],
             dar_contexts=plan["dar_contexts"],
             dar_anchors=dar_anchors,
+            affected_region_diagnostics=plan["affected_region_diagnostics"],
         )
 
     def unlearn_edges(
@@ -220,6 +257,7 @@ class HASIUnlearner:
         forget_edges = [(int(u), int(v)) for u, v in forget_edges]
         affected_seeds = sorted({node for edge in forget_edges for node in edge})
         affected_region = sorted(self.ppr.affected_region(self.graph, affected_seeds))
+        affected_region_diagnostics = dict(self.ppr.last_diagnostics)
 
         graph_before = self.graph.copy()
         graph_after = graph_before.copy()
@@ -277,6 +315,7 @@ class HASIUnlearner:
                 "reason": decision.reason,
                 "stats": self.inpainter.last_stats,
             },
+            affected_region_diagnostics=affected_region_diagnostics,
         )
 
     def unlearn_features(
@@ -447,7 +486,10 @@ class HASIUnlearner:
                 train_mask = train_mask[:, 0]
             train_mask = train_mask.detach().cpu().to(dtype=torch.bool)
             combined = train_mask & region_mask
-            return combined if combined.sum().item() > 0 else region_mask
+            # Never train on validation/test labels merely because the affected
+            # region has no retained training nodes. Returning None delegates to
+            # the trainer's normal retained training mask.
+            return combined if combined.sum().item() > 0 else None
         return region_mask
 
     def _feature_affected_region(self, embeddings_before: torch.Tensor, embeddings_after: torch.Tensor) -> tuple[list[int], Dict[str, Any]]:

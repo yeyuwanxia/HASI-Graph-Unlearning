@@ -12,6 +12,10 @@ PLANETOID_NAMES = {
     "pubmed": "PubMed",
 }
 PRIMEKG_NAMES = {"primekg", "primekg-homo"}
+PRIMEKG_FULL_NOSOURCE_NAMES = {
+    "primekg-full-nosource",
+    "primekg-homo-nosource",
+}
 PRIMEKG_DISEASE_GENE_SMALL_NAMES = {
     "primekg-disease-gene-small",
     "primekg-diseasegene-small",
@@ -26,6 +30,10 @@ HETIONET_SMALL_NOSOURCE_NAMES = {
     "hetionet-small-nosource",
     "hetionet-nosource",
     "hetionet-small",
+}
+HETIONET_FULL_NOSOURCE_NAMES = {
+    "hetionet-full-nosource",
+    "hetionet-full",
 }
 PPI_HOMO_SL_FILTERED_NAMES = {
     "ppi-homo-sl-filtered",
@@ -60,9 +68,9 @@ class DatasetBundle:
 def load_dataset(name: str, root: str | Path = "data/raw", normalize: bool = True, download: bool = True) -> DatasetBundle:
     """Load a graph dataset into a PyG Data object.
 
-    Supported names include cora, citeseer, pubmed, primekg,
+    Supported names include cora, citeseer, pubmed, primekg, primekg-full-nosource,
     primekg-disease-gene-small, primekg-disease-gene-small-nosource,
-    hetionet-small-nosource,
+    hetionet-small-nosource, hetionet-full-nosource,
     ppi-homo-sl-filtered, ppi-inductive-sl-filtered, ppi-inductive-sl-mostfreq-filtered,
     ppi-inductive-sl-balanced{K}-filtered, and reddit.
     The function keeps downloads in root.
@@ -96,6 +104,16 @@ def load_dataset(name: str, root: str | Path = "data/raw", normalize: bool = Tru
             root=root_path,
         )
 
+    if normalized_name in PRIMEKG_FULL_NOSOURCE_NAMES:
+        data, metadata = _load_primekg_full_nosource(root_path)
+        return DatasetBundle(
+            name="primekg-full-nosource",
+            data=data,
+            num_features=int(data.x.shape[1]),
+            num_classes=int(metadata["num_classes"]),
+            root=root_path,
+        )
+
     if normalized_name in PRIMEKG_DISEASE_GENE_SMALL_NAMES:
         data, metadata = _load_primekg_disease_gene_small(root_path)
         return DatasetBundle(
@@ -120,6 +138,16 @@ def load_dataset(name: str, root: str | Path = "data/raw", normalize: bool = Tru
         data, metadata = _load_hetionet_small_nosource(root_path, download=download)
         return DatasetBundle(
             name="hetionet-small-nosource",
+            data=data,
+            num_features=int(data.x.shape[1]),
+            num_classes=int(metadata["num_classes"]),
+            root=root_path,
+        )
+
+    if normalized_name in HETIONET_FULL_NOSOURCE_NAMES:
+        data, metadata = _load_hetionet_full_nosource(root_path, download=download)
+        return DatasetBundle(
+            name="hetionet-full-nosource",
             data=data,
             num_features=int(data.x.shape[1]),
             num_classes=int(metadata["num_classes"]),
@@ -177,7 +205,7 @@ def load_dataset(name: str, root: str | Path = "data/raw", normalize: bool = Tru
             root=root_path,
         )
 
-    supported = ", ".join([*PLANETOID_NAMES, "primekg", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced{K}-filtered", "reddit"])
+    supported = ", ".join([*PLANETOID_NAMES, "primekg", "primekg-full-nosource", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "hetionet-full-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced{K}-filtered", "reddit"])
     raise ValueError(f"Unsupported dataset {name!r}. Supported datasets: {supported}")
 
 
@@ -206,6 +234,10 @@ def dataset_cache_paths(name: str, root: str | Path = "data/raw") -> list[Path]:
         from .primekg import primekg_cache_paths
 
         return primekg_cache_paths(root_path)
+    if normalized_name in PRIMEKG_FULL_NOSOURCE_NAMES:
+        from .primekg import primekg_full_nosource_cache_paths
+
+        return primekg_full_nosource_cache_paths(root_path)
     if normalized_name in PRIMEKG_DISEASE_GENE_SMALL_NAMES:
         from .primekg import primekg_disease_gene_small_cache_paths
 
@@ -218,6 +250,10 @@ def dataset_cache_paths(name: str, root: str | Path = "data/raw") -> list[Path]:
         from .hetionet import hetionet_small_nosource_cache_paths
 
         return hetionet_small_nosource_cache_paths(root_path)
+    if normalized_name in HETIONET_FULL_NOSOURCE_NAMES:
+        from .hetionet import hetionet_full_nosource_cache_paths
+
+        return hetionet_full_nosource_cache_paths(root_path)
     if normalized_name in PPI_HOMO_SL_FILTERED_NAMES:
         return [root_path / "Planetoid" / "PPI" / "processed_ppi_homo_sl_filtered"]
     if normalized_name in PPI_INDUCTIVE_SL_FILTERED_NAMES:
@@ -232,7 +268,7 @@ def dataset_cache_paths(name: str, root: str | Path = "data/raw") -> list[Path]:
             root_path / "Reddit" / "processed",
             root_path / "Reddit" / "raw",
         ]
-    supported = ", ".join([*PLANETOID_NAMES, "primekg", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced{K}-filtered", "reddit"])
+    supported = ", ".join([*PLANETOID_NAMES, "primekg", "primekg-full-nosource", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "hetionet-full-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced{K}-filtered", "reddit"])
     raise ValueError(f"Unsupported dataset {name!r}. Supported datasets: {supported}")
 
 
@@ -437,6 +473,12 @@ def _load_primekg(root: Path):
     return load_primekg_homo(root)
 
 
+def _load_primekg_full_nosource(root: Path):
+    from .primekg import load_primekg_full_nosource
+
+    return load_primekg_full_nosource(root)
+
+
 def _load_primekg_disease_gene_small(root: Path):
     from .primekg import load_primekg_disease_gene_small
 
@@ -467,6 +509,12 @@ def _load_hetionet_small_nosource(root: Path, *, download: bool = True):
     from .hetionet import load_hetionet_small_nosource
 
     return load_hetionet_small_nosource(root, download=download)
+
+
+def _load_hetionet_full_nosource(root: Path, *, download: bool = True):
+    from .hetionet import load_hetionet_full_nosource
+
+    return load_hetionet_full_nosource(root, download=download)
 
 
 def _load_ppi_homo_sl_filtered(root: Path):

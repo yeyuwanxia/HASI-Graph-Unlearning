@@ -86,14 +86,17 @@ class GIFBaseline:
         loss_all = F.cross_entropy(logits_original[train_mask], y[train_mask], reduction="sum")
         loss_original_region = F.cross_entropy(logits_original[affected_mask], y[affected_mask], reduction="sum")
         grad_all = _grad(loss_all, params, retain_graph=True, create_graph=True)
-        grad_original_region = _grad(loss_original_region, params, retain_graph=True, create_graph=True)
+        grad_original_region = _grad(loss_original_region, params, retain_graph=True, create_graph=False)
 
         logits_deleted = model(data_after.x, data_after.edge_index)
         y_after = _labels(data_after)
         loss_deleted_region = F.cross_entropy(logits_deleted[affected_mask], y_after[affected_mask], reduction="sum")
-        grad_deleted_region = _grad(loss_deleted_region, params, retain_graph=True, create_graph=True)
+        grad_deleted_region = _grad(loss_deleted_region, params, retain_graph=False, create_graph=False)
 
-        vector = tuple(before - after for before, after in zip(grad_original_region, grad_deleted_region))
+        # The region-gradient difference is the fixed right-hand side of the
+        # inverse-Hessian estimate; retaining its autograd graphs only wastes memory.
+        vector = tuple((before - after).detach() for before, after in zip(grad_original_region, grad_deleted_region))
+        del logits_deleted, loss_deleted_region, grad_deleted_region, grad_original_region, loss_original_region
         h_estimate = tuple(item.detach().clone() for item in vector)
         for _ in range(max(0, int(self.config.iteration))):
             hvp = _hvp(grad_all, params, h_estimate)

@@ -13,8 +13,11 @@ import torch
 
 
 HETIONET_SMALL_NOSOURCE_VARIANT = "hetionet_small_nosource"
+HETIONET_FULL_NOSOURCE_VARIANT = "hetionet_full_nosource"
 RAW_FILE = "hetionet-v1.0.json.bz2"
-PROCESSED_DIR = "processed_small_nosource"
+PROCESSED_SMALL_NOSOURCE_DIR = "processed_small_nosource"
+PROCESSED_FULL_NOSOURCE_DIR = "processed_full_nosource"
+PROCESSED_DIR = PROCESSED_SMALL_NOSOURCE_DIR
 DATA_FILE = "data.pt"
 METADATA_FILE = "metadata.json"
 DEFAULT_DOWNLOAD_URL = "https://github.com/hetio/hetionet/raw/main/hetnet/json/hetionet-v1.0.json.bz2"
@@ -52,7 +55,12 @@ FEATURE_SCHEMA = [
 
 def hetionet_small_nosource_cache_paths(root: str | Path) -> list[Path]:
     base = _hetionet_root(root)
-    return [base / PROCESSED_DIR, base]
+    return [base / PROCESSED_SMALL_NOSOURCE_DIR, base]
+
+
+def hetionet_full_nosource_cache_paths(root: str | Path) -> list[Path]:
+    base = _hetionet_root(root)
+    return [base / PROCESSED_FULL_NOSOURCE_DIR, base]
 
 
 def load_hetionet_small_nosource(
@@ -66,6 +74,7 @@ def load_hetionet_small_nosource(
     make_undirected: bool = True,
     deduplicate_edges: bool = True,
     remove_self_loops: bool = True,
+    drop_isolated_nodes: bool = True,
     force_rebuild: bool = False,
 ):
     """Load or build a structure-only Hetionet node-type classification graph.
@@ -73,17 +82,95 @@ def load_hetionet_small_nosource(
     The task label is the biomedical entity type. Features deliberately exclude
     entity-type one-hot, source/database indicators, and relation-type counts.
     """
+    return _load_hetionet_nosource(
+        root,
+        download=download,
+        dataset_name="hetionet-small-nosource",
+        dataset_variant=HETIONET_SMALL_NOSOURCE_VARIANT,
+        processed_dir_name=PROCESSED_SMALL_NOSOURCE_DIR,
+        node_types=node_types,
+        max_nodes_per_class=max_nodes_per_class,
+        min_nodes_per_class=min_nodes_per_class,
+        selection_seed=selection_seed,
+        make_undirected=make_undirected,
+        deduplicate_edges=deduplicate_edges,
+        remove_self_loops=remove_self_loops,
+        drop_isolated_nodes=drop_isolated_nodes,
+        force_rebuild=force_rebuild,
+        node_rule="sample major biomedical entity types with per-class caps",
+    )
+
+
+def load_hetionet_full_nosource(
+    root: str | Path,
+    *,
+    download: bool = True,
+    node_types: tuple[str, ...] | None = None,
+    max_nodes_per_class: int | None = None,
+    min_nodes_per_class: int = 1,
+    selection_seed: int = 42,
+    make_undirected: bool = True,
+    deduplicate_edges: bool = True,
+    remove_self_loops: bool = True,
+    drop_isolated_nodes: bool = False,
+    force_rebuild: bool = False,
+):
+    """Load or build the full structure-only Hetionet node-type graph.
+
+    Unlike ``hetionet-small-nosource``, this variant keeps all raw Hetionet
+    metanode types by default and applies no per-class cap. Features still
+    exclude entity-type one-hot, source/database indicators, and relation-type
+    counts.
+    """
+    return _load_hetionet_nosource(
+        root,
+        download=download,
+        dataset_name="hetionet-full-nosource",
+        dataset_variant=HETIONET_FULL_NOSOURCE_VARIANT,
+        processed_dir_name=PROCESSED_FULL_NOSOURCE_DIR,
+        node_types=node_types,
+        max_nodes_per_class=max_nodes_per_class,
+        min_nodes_per_class=min_nodes_per_class,
+        selection_seed=selection_seed,
+        make_undirected=make_undirected,
+        deduplicate_edges=deduplicate_edges,
+        remove_self_loops=remove_self_loops,
+        drop_isolated_nodes=drop_isolated_nodes,
+        force_rebuild=force_rebuild,
+        node_rule="retain all raw Hetionet metanode types without per-class caps",
+    )
+
+
+def _load_hetionet_nosource(
+    root: str | Path,
+    *,
+    download: bool,
+    dataset_name: str,
+    dataset_variant: str,
+    processed_dir_name: str,
+    node_types: tuple[str, ...] | None,
+    max_nodes_per_class: int | None,
+    min_nodes_per_class: int,
+    selection_seed: int,
+    make_undirected: bool,
+    deduplicate_edges: bool,
+    remove_self_loops: bool,
+    drop_isolated_nodes: bool,
+    force_rebuild: bool,
+    node_rule: str,
+):
+    """Build a homogeneous, structure-only Hetionet node-type task."""
 
     try:
         from torch_geometric.data import Data
     except ImportError as exc:
         raise SystemExit(
-            "torch-geometric is required to build/load Hetionet-small-nosource. "
+            f"torch-geometric is required to build/load {dataset_name}. "
             "Use the graphunlearning environment or install torch-geometric."
         ) from exc
 
     base = _hetionet_root(root)
-    processed = base / PROCESSED_DIR
+    processed = base / processed_dir_name
     data_path = processed / DATA_FILE
     metadata_path = processed / METADATA_FILE
     if data_path.exists() and metadata_path.exists() and not force_rebuild:
@@ -105,7 +192,7 @@ def load_hetionet_small_nosource(
     if not isinstance(nodes, list) or not isinstance(edges, list):
         raise ValueError(f"Unexpected Hetionet JSON structure in {raw_path}")
 
-    wanted_types = tuple(_canonical_type(name) for name in node_types)
+    wanted_types = _resolve_node_types(raw, nodes, node_types)
     wanted_set = set(wanted_types)
     nodes_by_type: dict[str, list[dict[str, Any]]] = defaultdict(list)
     all_type_counts: Counter[str] = Counter()
@@ -126,7 +213,7 @@ def load_hetionet_small_nosource(
         if len(candidates) < int(min_nodes_per_class):
             skipped_types[node_type] = len(candidates)
             continue
-        if len(candidates) > int(max_nodes_per_class):
+        if max_nodes_per_class is not None and len(candidates) > int(max_nodes_per_class):
             sampled_positions = set(rng.sample(range(len(candidates)), int(max_nodes_per_class)))
             candidates = [node for idx, node in enumerate(candidates) if idx in sampled_positions]
         selected_counts_before_edges[node_type] = len(candidates)
@@ -134,7 +221,7 @@ def load_hetionet_small_nosource(
 
     if len(selected_counts_before_edges) < 2:
         raise ValueError(
-            "Hetionet-small-nosource needs at least two retained classes. "
+            f"{dataset_name} needs at least two retained classes. "
             f"Retained={selected_counts_before_edges}, skipped={skipped_types}"
         )
 
@@ -199,8 +286,9 @@ def load_hetionet_small_nosource(
 
     processed_degree = torch.bincount(edge_index[0], minlength=len(node_kinds)).to(torch.float32)
     keep_nodes = processed_degree > 0
-    removed_isolated_nodes = int((~keep_nodes).sum().item())
-    if removed_isolated_nodes:
+    isolated_nodes_before_drop = int((~keep_nodes).sum().item())
+    removed_isolated_nodes = isolated_nodes_before_drop if drop_isolated_nodes else 0
+    if drop_isolated_nodes and removed_isolated_nodes:
         old_to_new = torch.full((len(node_kinds),), -1, dtype=torch.long)
         old_to_new[keep_nodes] = torch.arange(int(keep_nodes.sum().item()), dtype=torch.long)
         keep_edges = keep_nodes[edge_index[0]] & keep_nodes[edge_index[1]]
@@ -223,8 +311,8 @@ def load_hetionet_small_nosource(
 
     class_counts = torch.bincount(y, minlength=len(class_mapping)).tolist()
     metadata: dict[str, Any] = {
-        "dataset": "hetionet-small-nosource",
-        "dataset_variant": HETIONET_SMALL_NOSOURCE_VARIANT,
+        "dataset": dataset_name,
+        "dataset_variant": dataset_variant,
         "source_dataset": "hetionet",
         "original_graph_type": "heterogeneous_biomedical_knowledge_graph",
         "graph_type": "homogeneous_projection",
@@ -233,11 +321,12 @@ def load_hetionet_small_nosource(
         "download_url": DEFAULT_DOWNLOAD_URL,
         "processed_data": str(data_path),
         "construction_protocol": {
-            "node_rule": "sample major biomedical entity types with per-class caps",
+            "node_rule": node_rule,
             "edge_rule": "keep original Hetionet edges whose endpoints are selected nodes",
             "selection_seed": int(selection_seed),
-            "max_nodes_per_class": int(max_nodes_per_class),
+            "max_nodes_per_class": int(max_nodes_per_class) if max_nodes_per_class is not None else None,
             "min_nodes_per_class": int(min_nodes_per_class),
+            "drop_isolated_nodes": bool(drop_isolated_nodes),
             "uses_train_val_test_split": False,
         },
         "target_node_types": list(wanted_types),
@@ -245,6 +334,7 @@ def load_hetionet_small_nosource(
         "num_source_nodes": int(len(nodes)),
         "num_source_edges": int(len(edges)),
         "num_nodes_before_isolated_removal": int(len(keep_nodes)),
+        "num_isolated_nodes_before_drop": isolated_nodes_before_drop,
         "removed_isolated_nodes": removed_isolated_nodes,
         "num_nodes": int(data.num_nodes),
         "num_edges_raw_kept": int(kept_raw_edge_count),
@@ -294,7 +384,12 @@ def _structure_features(
     num_nodes = int(raw_in_degree.numel())
     graph = nx.Graph()
     graph.add_nodes_from(range(num_nodes))
-    graph.add_edges_from((int(src), int(dst)) for src, dst in edge_index.t().tolist() if int(src) != int(dst))
+    edge_index_cpu = edge_index.detach().cpu()
+    graph.add_edges_from(
+        (int(src), int(dst))
+        for src, dst in zip(edge_index_cpu[0].tolist(), edge_index_cpu[1].tolist())
+        if int(src) != int(dst)
+    )
 
     degree = torch.tensor([float(graph.degree(node)) for node in range(num_nodes)], dtype=torch.float32)
     max_degree = degree.max().clamp(min=1.0)
@@ -397,6 +492,24 @@ def _read_hetionet_json(path: Path) -> dict[str, Any]:
         with gzip.open(path, "rt", encoding="utf-8") as handle:
             return json.load(handle)
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _resolve_node_types(raw: dict[str, Any], nodes: list[dict[str, Any]], node_types: tuple[str, ...] | None) -> tuple[str, ...]:
+    if node_types is not None:
+        return tuple(_canonical_type(name) for name in node_types)
+
+    raw_types = raw.get("metanode_kinds")
+    if isinstance(raw_types, list) and raw_types:
+        return tuple(_canonical_type(str(name)) for name in raw_types)
+
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    for node in nodes:
+        kind = _canonical_type(str(node.get("kind", "")))
+        if kind and kind not in seen_set:
+            seen.append(kind)
+            seen_set.add(kind)
+    return tuple(seen)
 
 
 def _node_key(node: dict[str, Any]) -> tuple[str, str] | None:

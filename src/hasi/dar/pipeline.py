@@ -7,6 +7,8 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 import networkx as nx
 
+from hasi.graph_compute import ShortestPathComputer
+
 
 @dataclass(frozen=True)
 class DARConfig:
@@ -21,6 +23,8 @@ class DARConfig:
     beta_score: float = 0.4
     max_search_radius: Optional[int] = None
     seed: int = 42
+    compute_backend: str = "auto"
+    device: Optional[str] = None
 
 
 @dataclass
@@ -36,6 +40,7 @@ class DeletionContext:
     strategy: str = "distributed"
     original_min_distance: int = 0
     final_min_distance: int = 0
+    distance_backend: Dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -52,6 +57,10 @@ class DARPipeline:
 
     def __init__(self, config: Optional[DARConfig] = None):
         self.config = config or DARConfig()
+        self.distance_computer = ShortestPathComputer(
+            backend=self.config.compute_backend,
+            device=self.config.device,
+        )
 
     def run_phase1(
         self,
@@ -65,10 +74,11 @@ class DARPipeline:
         if deleted_node not in graph:
             raise ValueError(f"deleted_node {deleted_node} must exist before DAR phase1")
 
+        self.distance_computer.clear()
         excluded = {int(node) for node in (excluded_nodes or set())}
         excluded.add(int(deleted_node))
         cutoff = self.config.max_search_radius
-        distances = nx.single_source_shortest_path_length(graph, deleted_node, cutoff=cutoff)
+        distances = self.distance_computer.single_source(graph, deleted_node, cutoff=cutoff)
         distances = {int(node): int(distance) for node, distance in distances.items()}
         neighbors = sorted(int(node) for node in graph.neighbors(deleted_node))
 
@@ -145,6 +155,7 @@ class DARPipeline:
             strategy=strategy,
             original_min_distance=int(self.config.min_distance),
             final_min_distance=int(final_min),
+            distance_backend=dict(self.distance_computer.last_diagnostics),
         )
 
     def run_phase2(self, context: DeletionContext, repaired_graph: nx.Graph) -> List[DistributedAnchor]:
@@ -224,6 +235,9 @@ class DARPipeline:
             )
         context.final_min_distance = int(final_min)
         return anchors
+
+    def clear_distance_cache(self) -> None:
+        self.distance_computer.clear()
 
     def _strategy(self) -> str:
         strategy = str(self.config.strategy or "distributed").lower()
@@ -348,7 +362,10 @@ class DARPipeline:
                     node
                     for node in all_candidates
                     if node not in selected
-                    and all(self._safe_distance(graph, node, chosen) >= current_min_dist for chosen in selected)
+                    and all(
+                        self._selection_distance(graph, node, chosen) >= current_min_dist
+                        for chosen in selected
+                    )
                 ]
                 if not available:
                     made_progress = False
@@ -379,7 +396,10 @@ class DARPipeline:
         hub_norm = self._normalize({node: hub_scores.get(node, 0.0) for node in candidates})
         if selected:
             diversity_raw = {
-                node: min(self._safe_distance(graph, node, chosen) for chosen in selected)
+                node: min(
+                    self._selection_distance(graph, node, chosen)
+                    for chosen in selected
+                )
                 for node in candidates
             }
             cap = max(1, graph.number_of_nodes())
@@ -447,9 +467,12 @@ class DARPipeline:
             result.append(node)
         return result
 
-    @staticmethod
-    def _safe_distance(graph: nx.Graph, source: int, target: int) -> int:
-        try:
-            return int(nx.shortest_path_length(graph, source, target))
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            return 10**9
+    def _safe_distance(self, graph: nx.Graph, source: int, target: int) -> int:
+        return self.distance_computer.distance(graph, source, target)
+
+    def _selection_distance(self, graph: nx.Graph, candidate: int, selected: int) -> int:
+        if graph.is_directed():
+            return self._safe_distance(graph, candidate, selected)
+        # Undirected distance is symmetric. Querying from the few selected
+        # anchors lets the exact BFS cache serve every candidate.
+        return self._safe_distance(graph, selected, candidate)

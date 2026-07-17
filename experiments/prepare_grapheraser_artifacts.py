@@ -22,7 +22,7 @@ from utils import RuntimeTracker
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare offline GraphEraser partition and shard-model artifacts.")
-    parser.add_argument("--dataset_name", default="pubmed", choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
+    parser.add_argument("--dataset_name", default="pubmed", choices=["cora", "citeseer", "pubmed", "primekg", "primekg-homo", "primekg-full-nosource", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "hetionet-full-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered", "reddit"])
     parser.add_argument("--unlearning_type", default="node", choices=["node", "edge", "feature"])
     parser.add_argument("--baselines", default="grapheraser-bekm,grapheraser-blpa")
     parser.add_argument("--seeds", default="42,123,2024")

@@ -17,6 +17,7 @@ from .forget_sets import (
     load_forget_set,
     parse_forget_targets,
     save_forget_set,
+    with_protocol_semantics,
 )
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "select_forget_edges",
     "select_forget_features",
     "select_forget_nodes",
+    "with_protocol_semantics",
 ]

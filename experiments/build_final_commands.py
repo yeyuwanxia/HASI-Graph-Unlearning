@@ -216,10 +216,12 @@ def _summary(matrix_path: Path, matrix: dict[str, Any], runs: list[FinalRun]) ->
     by_method: dict[str, int] = {}
     by_dataset: dict[str, int] = {}
     by_type: dict[str, int] = {}
+    by_forget_seed: dict[int, int] = {}
     for run in runs:
         by_method[run.method] = by_method.get(run.method, 0) + 1
         by_dataset[run.dataset] = by_dataset.get(run.dataset, 0) + 1
         by_type[run.unlearning_type] = by_type.get(run.unlearning_type, 0) + 1
+        by_forget_seed[run.seed] = by_forget_seed.get(run.seed, 0) + 1
     return {
         "matrix": str(matrix_path),
         "name": matrix.get("name"),

@@ -14,8 +14,8 @@ REPO_SRC = REPO_ROOT / "src"
 if str(REPO_SRC) not in sys.path:
     sys.path.insert(0, str(REPO_SRC))
 
-from data import apply_stratified_split, load_dataset, load_forget_set, parse_forget_targets
-from evaluation import build_experiment_metrics, save_metrics
+from data import apply_stratified_split, load_dataset, load_forget_set, parse_forget_targets, with_protocol_semantics
+from evaluation import build_experiment_metrics, load_exact_retrain_reference, save_metrics
 from evaluation.metrics import json_safe
 from models import GNNTrainer, TrainingConfig, build_gnn_model, default_base_artifact_dir, load_base_artifact
 from utils import RuntimeTracker
@@ -50,8 +50,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base_artifact_dir", default="")
     parser.add_argument("--experiment_name", default="default_main")
     parser.add_argument("--artifact_root", default="", help="Artifact root. Defaults to --output_root; legacy opengu_adapted_baselines/artifacts roots are redirected there.")
+    parser.add_argument("--artifact_dir", default="", help="Explicit GraphEraser artifact directory for this method/type/seed.")
     parser.add_argument("--output_root", default=str(LOCAL_ROOT / "results"))
     parser.add_argument("--output", default="")
+    parser.add_argument("--exact_retrain_reference", default="", help="Matching exact-retrain artifact for Edge diagnostics.")
     parser.add_argument("--rebuild_artifact", action="store_true")
     parser.add_argument("--prepare_artifact_only", action="store_true")
     return parser.parse_args()
@@ -110,13 +112,17 @@ def main() -> None:
 
     graph_artifact_dir = None
     if hasattr(baseline, "prepare_artifact"):
-        graph_artifact_dir = default_artifact_dir(
-            _resolve_artifact_root(args),
-            dataset=bundle.name,
-            experiment_name=args.experiment_name,
-            method=baseline.name,
-            unlearning_type=args.unlearning_type,
-            seed=args.seed,
+        graph_artifact_dir = (
+            Path(args.artifact_dir)
+            if args.artifact_dir
+            else default_artifact_dir(
+                _resolve_artifact_root(args),
+                dataset=bundle.name,
+                experiment_name=args.experiment_name,
+                method=baseline.name,
+                unlearning_type=args.unlearning_type,
+                seed=args.seed,
+            )
         )
         if args.rebuild_artifact or not (graph_artifact_dir / "metadata.json").exists():
             with timer.track("prepare_grapheraser_artifact"):
@@ -133,8 +139,11 @@ def main() -> None:
                     device=args.device,
                     overwrite=True,
                 )
-                metadata["offline_preprocessing_seconds"] = timer.times.get("prepare_grapheraser_artifact")
-                (graph_artifact_dir / "metadata.json").write_text(json.dumps(json_safe(metadata), indent=2) + "\n", encoding="utf-8")
+            metadata["offline_preprocessing_seconds"] = timer.times.get("prepare_grapheraser_artifact")
+            (graph_artifact_dir / "metadata.json").write_text(
+                json.dumps(json_safe(metadata), indent=2) + "\n",
+                encoding="utf-8",
+            )
         if args.prepare_artifact_only:
             timer.end_total()
             print(json.dumps(json_safe({"artifact_dir": str(graph_artifact_dir), "time": timer.to_dict()}), indent=2))
@@ -185,6 +194,17 @@ def main() -> None:
         with timer.track("predict_after"):
             logits_after, embeddings_after = after_trainer.predict_with_embeddings(result.data)
 
+    exact_reference_payload = None
+    if args.exact_retrain_reference:
+        with timer.track("load_exact_retrain_reference"):
+            exact_reference_payload = load_exact_retrain_reference(
+                args.exact_retrain_reference,
+                dataset=bundle.name,
+                unlearning_type=args.unlearning_type,
+                forget_set_path=forget_set_info["path"],
+                base_artifact_path=base_artifact_dir,
+            )
+
     offline_preprocessing_seconds = None
     if isinstance(result.training, dict):
         artifact_info = result.training.get("artifact")
@@ -208,10 +228,19 @@ def main() -> None:
             online_wall_clock_seconds=timer.total,
             time_breakdown=timer.times,
             offline_preprocessing_seconds=offline_preprocessing_seconds,
+            mia_seed=int(forget_set_info.get("seed", args.seed) or 0),
+            exact_retrain_logits=(exact_reference_payload or {}).get("logits"),
+            exact_retrain_embeddings=(exact_reference_payload or {}).get("embeddings"),
+            exact_retrain_reference=(
+                {
+                    **(exact_reference_payload or {}).get("metadata", {}),
+                    "path": (exact_reference_payload or {}).get("path"),
+                }
+                if exact_reference_payload else None
+            ),
         )
         metrics.pop("rq_summary", None)
 
-    timer.end_total()
     output = {
         "dataset": bundle.name,
         "baseline": args.baseline,
@@ -221,14 +250,32 @@ def main() -> None:
         "base_training": base_training,
         "base_artifact": _base_artifact_result(base_artifact_dir, base_artifact_metadata),
         "opengu_artifact": _artifact_result(graph_artifact_dir, result.training),
+        "exact_retrain_reference": {
+            "loaded": exact_reference_payload is not None,
+            "path": (exact_reference_payload or {}).get("path"),
+            "metadata": (exact_reference_payload or {}).get("metadata"),
+        },
         "result": result.as_dict(),
         "metrics": metrics,
-        "runtime": timer.to_dict(),
     }
 
     output_path = Path(args.output) if args.output else _default_output_path(args, bundle.name, result.method, forget_set_info)
-    output["metrics_path"] = str(save_metrics(output, output_path))
+    output["metrics_path"] = str(output_path)
+    save_start = time.perf_counter()
+    save_metrics(output, output_path)
+    timer.add("save", time.perf_counter() - save_start)
+    timer.end_total()
+    runtime = timer.to_dict()
+    efficiency = metrics.setdefault("efficiency", {})
+    efficiency["online_wall_clock_seconds"] = runtime["online_wall_clock_seconds"]
+    efficiency["time_breakdown"] = runtime["time_breakdown"]
+    output["runtime"] = runtime
+    save_metrics(output, output_path)
     print(json.dumps(json_safe(output), indent=2))
+    if args.exact_retrain_reference and args.unlearning_type != "edge":
+        raise SystemExit("--exact_retrain_reference requires edge unlearning.")
+    if args.exact_retrain_reference and not args.forget_set_file:
+        raise SystemExit("--exact_retrain_reference requires --forget_set_file.")
 
 
 def _validate_args(args: argparse.Namespace) -> None:
@@ -310,6 +357,7 @@ def _resolve_forget_targets(args: argparse.Namespace, data, dataset_name: str):
         "unlearning_type": args.unlearning_type,
         "ratio": args.forget_ratio,
         "targets": explicit,
+        "protocol": with_protocol_semantics(args.unlearning_type, None),
     }
 
 

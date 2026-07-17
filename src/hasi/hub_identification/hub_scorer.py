@@ -5,6 +5,8 @@ from typing import Dict, Iterable, Mapping, Optional, Sequence, Set
 
 import networkx as nx
 
+from hasi.graph_compute import BackendDecision, TorchSparseGraph, resolve_backend
+
 
 ScoreMap = Dict[int, float]
 
@@ -22,6 +24,9 @@ class HubScoreConfig:
     ppr_alpha: float = 0.15
     ppr_max_iter: int = 50
     ppr_tol: float = 1e-6
+    compute_backend: str = "cpu"
+    compute_device: Optional[str] = None
+    ppr_batch_size: int = 64
 
 
 class HubScorer:
@@ -35,6 +40,11 @@ class HubScorer:
 
     def __init__(self, config: Optional[HubScoreConfig] = None):
         self.config = config or HubScoreConfig()
+        self.backend_decision = resolve_backend(
+            self.config.compute_backend, self.config.compute_device
+        )
+        self._torch_graphs: Dict[tuple[nx.Graph, int, int], TorchSparseGraph] = {}
+        self.last_diagnostics: Dict[str, object] = self.backend_decision.as_dict()
 
     def compute_hub_scores(
         self,
@@ -96,12 +106,34 @@ class HubScorer:
         if not nodes:
             return {}
 
-        pagerank = nx.pagerank(graph, alpha=0.85) if graph.number_of_edges() else {node: 1.0 for node in graph.nodes}
         degree = dict(graph.degree())
-        try:
-            eigen = nx.eigenvector_centrality(graph, max_iter=200)
-        except (nx.NetworkXException, ZeroDivisionError):
-            eigen = pagerank
+        if self.backend_decision.used == "torch" and graph.number_of_edges():
+            try:
+                sparse_graph = self._torch_graph(graph)
+                pagerank_values = sparse_graph.pagerank(alpha=0.85, max_iter=100, tol=1e-6)
+                eigen_values = sparse_graph.eigenvector_centrality(max_iter=200, tol=1e-6)
+                pagerank = {
+                    int(node): float(value)
+                    for node, value in zip(sparse_graph.nodes, pagerank_values.detach().cpu().tolist())
+                }
+                eigen = {
+                    int(node): float(value)
+                    for node, value in zip(sparse_graph.nodes, eigen_values.detach().cpu().tolist())
+                }
+                self.last_diagnostics.update(
+                    {
+                        "centrality_backend": "torch_sparse",
+                        "pagerank_iterations": sparse_graph.last_pagerank_iterations,
+                        "eigenvector_iterations": sparse_graph.last_eigenvector_iterations,
+                    }
+                )
+            except (RuntimeError, NotImplementedError, nx.NetworkXException) as exc:
+                if self.backend_decision.requested != "auto":
+                    raise
+                self._fallback_to_cpu(exc)
+                pagerank, eigen = self._centrality_cpu(graph)
+        else:
+            pagerank, eigen = self._centrality_cpu(graph)
 
         pr_norm = self._normalize_dict(pagerank, nodes)
         degree_norm = self._normalize_dict(degree, nodes)
@@ -117,10 +149,58 @@ class HubScorer:
     def compute_erf_influence(self, graph: nx.Graph, nodes: Iterable[int]) -> ScoreMap:
         """Approximate ERF influence with personalized PageRank mass."""
 
+        valid_nodes = [int(node) for node in nodes if node in graph]
+        if self.backend_decision.used == "torch" and valid_nodes:
+            try:
+                sparse_graph = self._torch_graph(graph)
+                raw_scores = sparse_graph.personalized_pagerank_off_diagonal_mass(
+                    valid_nodes,
+                    alpha=self.config.ppr_alpha,
+                    max_iter=self.config.ppr_max_iter,
+                    tol=self.config.ppr_tol,
+                    batch_size=self.config.ppr_batch_size,
+                )
+                self.last_diagnostics.update(
+                    {
+                        "erf_backend": "torch_sparse_batched",
+                        "erf_batch_size": int(self.config.ppr_batch_size),
+                        "erf_max_iterations_used": sparse_graph.last_personalized_pagerank_iterations,
+                        "erf_seed_count": len(valid_nodes),
+                    }
+                )
+            except (RuntimeError, NotImplementedError, nx.NetworkXException) as exc:
+                if self.backend_decision.requested != "auto":
+                    raise
+                self._fallback_to_cpu(exc)
+                raw_scores = self._erf_cpu(graph, valid_nodes)
+        else:
+            raw_scores = self._erf_cpu(graph, valid_nodes)
+        return self._normalize_dict(raw_scores, raw_scores.keys())
+
+    def _torch_graph(self, graph: nx.Graph) -> TorchSparseGraph:
+        key = (graph, graph.number_of_nodes(), graph.number_of_edges())
+        sparse_graph = self._torch_graphs.get(key)
+        if sparse_graph is None or str(sparse_graph.device) != str(self.backend_decision.device):
+            sparse_graph = TorchSparseGraph(graph, self.backend_decision.device)
+            self._torch_graphs[key] = sparse_graph
+        return sparse_graph
+
+    def _centrality_cpu(self, graph: nx.Graph) -> tuple[ScoreMap, ScoreMap]:
+        pagerank = (
+            nx.pagerank(graph, alpha=0.85)
+            if graph.number_of_edges()
+            else {int(node): 1.0 for node in graph.nodes}
+        )
+        try:
+            eigen = nx.eigenvector_centrality(graph, max_iter=200)
+        except (nx.NetworkXException, ZeroDivisionError):
+            eigen = pagerank
+        self.last_diagnostics["centrality_backend"] = "networkx_cpu"
+        return pagerank, eigen
+
+    def _erf_cpu(self, graph: nx.Graph, nodes: Iterable[int]) -> ScoreMap:
         raw_scores: ScoreMap = {}
         for node in nodes:
-            if node not in graph:
-                continue
             ppr = nx.pagerank(
                 graph,
                 alpha=self.config.ppr_alpha,
@@ -129,7 +209,22 @@ class HubScorer:
                 tol=self.config.ppr_tol,
             )
             raw_scores[int(node)] = sum(ppr.values()) - ppr.get(node, 0.0)
-        return self._normalize_dict(raw_scores, raw_scores.keys())
+        self.last_diagnostics.update(
+            {
+                "erf_backend": "networkx_cpu_per_seed",
+                "erf_seed_count": len(raw_scores),
+            }
+        )
+        return raw_scores
+
+    def _fallback_to_cpu(self, exc: Exception) -> None:
+        self.backend_decision = BackendDecision(
+            requested="auto",
+            used="cpu",
+            device="cpu",
+            fallback_reason=f"torch HubScore failed: {type(exc).__name__}: {exc}",
+        )
+        self.last_diagnostics = self.backend_decision.as_dict()
 
     def _retain_candidates(self, centrality: Mapping[int, float]) -> Set[int]:
         if self.config.filter_ratio >= 1.0:

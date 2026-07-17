@@ -15,9 +15,10 @@ class ForgetSet:
     selection: Optional[str]
     targets: list[Any]
     path: Optional[Path] = None
+    protocol: Optional[dict[str, Any]] = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "dataset": self.dataset,
             "unlearning_type": self.unlearning_type,
             "ratio": self.ratio,
@@ -25,6 +26,9 @@ class ForgetSet:
             "selection": self.selection,
             "targets": self.targets,
         }
+        if self.protocol:
+            payload["protocol"] = self.protocol
+        return payload
 
 
 def save_forget_set(
@@ -47,10 +51,9 @@ def save_forget_set(
         seed=int(seed),
         selection=str(selection),
         targets=_normalize_targets(targets, unlearning_type),
+        protocol=with_protocol_semantics(unlearning_type, protocol_metadata),
     )
     payload = spec.as_dict()
-    if protocol_metadata:
-        payload["protocol"] = protocol_metadata
     output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return output_path
 
@@ -80,6 +83,7 @@ def load_forget_set(
             selection=payload.get("selection"),
             targets=_normalize_targets(payload.get("targets", []), unlearning_type),
             path=input_path,
+            protocol=with_protocol_semantics(unlearning_type, payload.get("protocol")),
         )
     else:
         unlearning_type = _normalize_type(expected_type or "")
@@ -93,6 +97,7 @@ def load_forget_set(
             selection="text_file",
             targets=_parse_text_targets(content, unlearning_type),
             path=input_path,
+            protocol=with_protocol_semantics(unlearning_type, None),
         )
 
     if expected_type and spec.unlearning_type != _normalize_type(expected_type):
@@ -173,6 +178,26 @@ def _normalize_type(unlearning_type: str) -> str:
     if value not in {"node", "edge", "feature"}:
         raise ValueError(f"Unsupported unlearning_type {unlearning_type!r}.")
     return value
+
+
+def with_protocol_semantics(
+    unlearning_type: str,
+    protocol: Optional[dict[str, Any]],
+) -> dict[str, Any]:
+    merged = dict(protocol or {})
+    if _normalize_type(unlearning_type) == "edge":
+        merged.setdefault("sampling_unit", "directed_edge_index_entry")
+        merged.setdefault("ratio_denominator", "directed_candidate_edge_index_entries")
+        merged.setdefault("deletion_operator", "undirected_closure")
+        merged.setdefault(
+            "paper_wording",
+            "Sample a ratio of directed candidate edge_index entries, then delete their undirected closure.",
+        )
+    elif _normalize_type(unlearning_type) == "feature":
+        merged.setdefault("request_unit", "global_feature_dimension")
+        merged.setdefault("deletion_operator", "zero_selected_dimensions_for_all_nodes")
+        merged.setdefault("node_mia", "not_applicable")
+    return merged
 
 
 def _normalize_dataset_name(dataset: str) -> str:

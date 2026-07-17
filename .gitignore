@@ -20,6 +20,15 @@ env/
 logs/
 opengu_adapted_baselines/logs/
 
+# Local writing packages, assistant workspaces, and scratch migration notes
+zhangao/
+.claude/
+HASI_隐私调优_学生包/
+*.orig
+migration_*.txt
+graphunlearning.env.yml
+graphunlearning.explicit.txt
+
 
 # Generated forget-set JSONs are reproducible experiment inputs; keep them local.
 /experiments/forget_sets/

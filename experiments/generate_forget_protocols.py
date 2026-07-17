@@ -42,6 +42,12 @@ def parse_args():
         help="Optional comma-separated forget-set sampling seeds. When omitted, uses --seeds.",
     )
     parser.add_argument(
+        "--seed_pairing",
+        default="product",
+        choices=["product", "zip"],
+        help="Pair explicit shared-base/forget seeds by Cartesian product or position.",
+    )
+    parser.add_argument(
         "--node_selections",
         default=",".join(DEFAULT_NODE_SELECTIONS),
         help="Comma-separated node selection policies: random_train,random_all,hub,low_degree.",
@@ -65,12 +71,24 @@ def parse_args():
         choices=["train_subgraph", "full"],
         help="For edge unlearning, sample from train-train edges or the full edge_index.",
     )
+    parser.add_argument(
+        "--edge_sampling_unit",
+        default="directed_entry",
+        choices=["directed_entry", "unique_undirected"],
+        help="Sample directed edge_index entries or canonical unique undirected edges.",
+    )
     parser.add_argument("--output_dir", default=str(ROOT / "experiments" / "forget_sets"))
     parser.add_argument(
         "--layout",
         default="flat",
         choices=["flat", "shared_base_forget_seed"],
         help="Use flat legacy filenames, or nested shared_base_seed*/forget_seed*/ directories.",
+    )
+    parser.add_argument(
+        "--flat_seed_label",
+        default="seed",
+        choices=["seed", "base_fseed"],
+        help="For flat layout, use legacy seed{forget_seed} names or eval base{shared_base_seed}_fseed{forget_seed} names.",
     )
     parser.add_argument("--manifest", default=None, help="Defaults to <output_dir>/manifest.json.")
     parser.add_argument("--data_root", default=str(ROOT / "data" / "raw"))
@@ -88,7 +106,12 @@ def main():
     if args.shared_base_seeds or args.forget_seeds:
         shared_base_seeds = _parse_ints(args.shared_base_seeds) if args.shared_base_seeds else seeds
         forget_seeds = _parse_ints(args.forget_seeds) if args.forget_seeds else seeds
-        seed_pairs = [(shared_base_seed, forget_seed) for shared_base_seed in shared_base_seeds for forget_seed in forget_seeds]
+        if args.seed_pairing == "zip":
+            if len(shared_base_seeds) != len(forget_seeds):
+                raise ValueError("--seed_pairing zip requires equal shared-base and forget seed counts")
+            seed_pairs = list(zip(shared_base_seeds, forget_seeds))
+        else:
+            seed_pairs = [(shared_base_seed, forget_seed) for shared_base_seed in shared_base_seeds for forget_seed in forget_seeds]
     else:
         shared_base_seeds = seeds
         forget_seeds = seeds
@@ -117,6 +140,7 @@ def main():
                             base_artifact_root=args.base_artifact_root,
                             base_artifact_dir="",
                             edge_scope=args.edge_scope,
+                            edge_sampling_unit=args.edge_sampling_unit,
                         )
                         target_args = SimpleNamespace(**vars(split_args))
                         target_args.seed = forget_seed
@@ -129,6 +153,7 @@ def main():
                             shared_base_seed=shared_base_seed,
                             forget_seed=forget_seed,
                             selection=selection,
+                            flat_seed_label=args.flat_seed_label,
                         )
                         if output_path.exists() and not args.overwrite:
                             payload = json.loads(output_path.read_text(encoding="utf-8"))
@@ -186,8 +211,10 @@ def main():
         "seeds": seeds,
         "shared_base_seeds": shared_base_seeds,
         "forget_seeds": forget_seeds,
+        "seed_pairing": args.seed_pairing,
         "split_source": args.split_source,
         "edge_scope": args.edge_scope,
+        "edge_sampling_unit": args.edge_sampling_unit,
         "layout": args.layout,
         "records": records,
     }
@@ -217,6 +244,7 @@ def _output_path(
     shared_base_seed: int,
     forget_seed: int,
     selection: str,
+    flat_seed_label: str = "seed",
 ) -> Path:
     if layout == "shared_base_forget_seed":
         ratio_label = str(ratio).replace(".", "p")
@@ -228,6 +256,13 @@ def _output_path(
             / f"forget_seed{int(forget_seed)}"
             / filename
         )
+    if flat_seed_label == "base_fseed":
+        ratio_label = str(ratio).replace(".", "p")
+        filename = (
+            f"{dataset}_{unlearning_type}_r{ratio_label}_{selection}"
+            f"_base{int(shared_base_seed)}_fseed{int(forget_seed)}.json"
+        )
+        return Path(output_dir) / dataset / filename
     return _default_output_path(
         ROOT,
         output_dir,

@@ -19,8 +19,14 @@ class MIAResult:
     medium_feature_dim: int
     strong_feature_dim: int
     medium_uses_shadow: bool = False
+    medium_evaluation: str = "held_out_target_split"
+    medium_train_size: int = 0
+    medium_eval_size: int = 0
+    strong_auc_null_mean: float = 0.5
+    strong_auc_null_std: float = 0.0
+    strong_auc_pvalue: float = 1.0
 
-    def as_dict(self) -> Dict[str, float | int | bool]:
+    def as_dict(self) -> Dict[str, float | int | bool | str]:
         return {
             "weak_auc": self.weak_auc,
             "medium_auc": self.medium_auc,
@@ -33,6 +39,12 @@ class MIAResult:
             "medium_feature_dim": self.medium_feature_dim,
             "strong_feature_dim": self.strong_feature_dim,
             "medium_uses_shadow": self.medium_uses_shadow,
+            "medium_evaluation": self.medium_evaluation,
+            "medium_train_size": self.medium_train_size,
+            "medium_eval_size": self.medium_eval_size,
+            "strong_auc_null_mean": self.strong_auc_null_mean,
+            "strong_auc_null_std": self.strong_auc_null_std,
+            "strong_auc_pvalue": self.strong_auc_pvalue,
         }
 
 
@@ -77,17 +89,30 @@ class MediumAttacker:
         *,
         shadow_features=None,
         shadow_labels=None,
-    ) -> tuple[np.ndarray, bool]:
+    ) -> tuple[np.ndarray, np.ndarray, bool, int]:
         target_rows = np.concatenate([features[members], features[non_members]], axis=0)
         y_true = np.concatenate([np.ones(len(members)), np.zeros(len(non_members))])
+        target_indices = np.arange(len(y_true), dtype=int)
         if shadow_features is not None and shadow_labels is not None:
             train_x = _to_numpy(shadow_features)
             train_y = np.asarray(shadow_labels, dtype=float)
-            return _logistic_scores(train_x, train_y, target_rows), True
+            return (
+                _logistic_scores(train_x, train_y, target_rows),
+                target_indices,
+                True,
+                int(train_x.shape[0]),
+            )
         if len(y_true) >= 4 and len(np.unique(y_true)) == 2:
             train_idx = _stratified_half_indices(y_true)
-            return _logistic_scores(target_rows[train_idx], y_true[train_idx], target_rows), False
-        return _score_rows(features, members, non_members), False
+            eval_idx = np.setdiff1d(target_indices, train_idx, assume_unique=True)
+            if len(eval_idx) >= 2 and len(np.unique(y_true[eval_idx])) == 2:
+                return (
+                    _logistic_scores(target_rows[train_idx], y_true[train_idx], target_rows[eval_idx]),
+                    eval_idx,
+                    False,
+                    int(len(train_idx)),
+                )
+        return _score_rows(features, members, non_members), target_indices, False, 0
 
 
 class StrongAttacker:
@@ -194,7 +219,7 @@ class PrivacyEvaluator:
 
         y_true = np.concatenate([np.ones(len(members)), np.zeros(len(non_members))])
         weak_scores = self.weak_attacker.scores(weak_features, members, non_members)
-        medium_scores, medium_uses_shadow = self.medium_attacker.scores(
+        medium_scores, medium_eval_indices, medium_uses_shadow, medium_train_size = self.medium_attacker.scores(
             medium_features,
             members,
             non_members,
@@ -204,9 +229,24 @@ class PrivacyEvaluator:
         strong_scores = self.strong_attacker.scores(strong_features, members, non_members)
 
         weak_auc = _attack_auc(y_true, weak_scores)
-        medium_auc = _attack_auc(y_true, medium_scores)
-        strong_auc = _attack_auc(y_true, strong_scores)
+        medium_auc = _attack_auc(y_true[medium_eval_indices], medium_scores)
+        strong_ranks = _average_ranks(strong_scores)
+        strong_auc = _attack_auc_from_ranks(y_true, strong_ranks)
         privacy_score = max(0.0, 1.0 - 2.0 * abs(strong_auc - 0.5))
+
+        # Reuse exact score ranks across label permutations. This is mathematically
+        # identical to pairwise Mann-Whitney comparisons and scales to large graphs.
+        null_rng = np.random.default_rng(12345)
+        n_perm = 200
+        null_aucs = np.empty(n_perm)
+        for i in range(n_perm):
+            null_aucs[i] = _attack_auc_from_ranks(
+                null_rng.permutation(y_true), strong_ranks
+            )
+        strong_auc_null_mean = float(null_aucs.mean())
+        strong_auc_null_std = float(null_aucs.std())
+        strong_auc_pvalue = float((np.sum(null_aucs >= strong_auc) + 1) / (n_perm + 1))
+
         return MIAResult(
             weak_auc=float(weak_auc),
             medium_auc=float(medium_auc),
@@ -219,6 +259,16 @@ class PrivacyEvaluator:
             medium_feature_dim=int(medium_features.shape[1]),
             strong_feature_dim=int(strong_features.shape[1]),
             medium_uses_shadow=bool(medium_uses_shadow),
+            medium_evaluation=(
+                "shadow_transfer_target_eval"
+                if medium_uses_shadow
+                else "held_out_target_split" if medium_train_size else "unsupervised_fallback"
+            ),
+            medium_train_size=int(medium_train_size),
+            medium_eval_size=int(len(medium_eval_indices)),
+            strong_auc_null_mean=strong_auc_null_mean,
+            strong_auc_null_std=strong_auc_null_std,
+            strong_auc_pvalue=strong_auc_pvalue,
         )
 
 
@@ -291,10 +341,12 @@ def _local_homophily(graph, node: int, labels: np.ndarray, limit: int) -> float:
     return float(np.mean(labels[neighbors] == labels[node]))
 
 
-def _stratified_half_indices(y: np.ndarray) -> np.ndarray:
+def _stratified_half_indices(y: np.ndarray, seed: int = 12345) -> np.ndarray:
+    rng = np.random.default_rng(seed)
     indices: list[int] = []
     for label in np.unique(y):
-        label_indices = np.flatnonzero(y == label)
+        label_indices = np.flatnonzero(y == label).copy()
+        rng.shuffle(label_indices)
         take = max(1, len(label_indices) // 2)
         indices.extend(label_indices[:take].tolist())
     return np.array(sorted(indices), dtype=int)
@@ -326,20 +378,47 @@ def _logistic_scores(train_x: np.ndarray, train_y: np.ndarray, target_x: np.ndar
     return 1.0 / (1.0 + np.exp(-np.clip(target @ weights, -30.0, 30.0)))
 
 
-def _auc(y_true: np.ndarray, scores: np.ndarray) -> float:
-    positives = scores[y_true == 1]
-    negatives = scores[y_true == 0]
-    if len(positives) == 0 or len(negatives) == 0:
+def _average_ranks(scores: np.ndarray) -> np.ndarray:
+    values = np.asarray(scores, dtype=float).reshape(-1)
+    order = np.argsort(values, kind="mergesort")
+    sorted_values = values[order]
+    ranks = np.empty(len(values), dtype=float)
+    if len(values) == 0:
+        return ranks
+
+    starts = np.concatenate(
+        ([0], np.flatnonzero(sorted_values[1:] != sorted_values[:-1]) + 1)
+    )
+    ends = np.concatenate((starts[1:], [len(values)]))
+    for start, end in zip(starts, ends):
+        ranks[order[start:end]] = (float(start + 1) + float(end)) / 2.0
+    return ranks
+
+
+def _auc_from_ranks(y_true: np.ndarray, ranks: np.ndarray) -> float:
+    labels = np.asarray(y_true).reshape(-1)
+    ranks = np.asarray(ranks, dtype=float).reshape(-1)
+    if len(labels) != len(ranks):
+        raise ValueError("y_true and ranks must have the same length")
+    positive = labels == 1
+    num_positive = int(np.sum(positive))
+    num_negative = int(len(labels) - num_positive)
+    if num_positive == 0 or num_negative == 0:
         return 0.5
 
-    wins = 0.0
-    total = float(len(positives) * len(negatives))
-    for pos in positives:
-        wins += np.sum(pos > negatives)
-        wins += 0.5 * np.sum(pos == negatives)
-    return wins / total
+    rank_sum = float(np.sum(ranks[positive]))
+    mann_whitney = rank_sum - num_positive * (num_positive + 1) / 2.0
+    return float(np.clip(mann_whitney / (num_positive * num_negative), 0.0, 1.0))
+
+
+def _auc(y_true: np.ndarray, scores: np.ndarray) -> float:
+    return _auc_from_ranks(y_true, _average_ranks(scores))
+
+
+def _attack_auc_from_ranks(y_true: np.ndarray, ranks: np.ndarray) -> float:
+    raw_auc = _auc_from_ranks(y_true, ranks)
+    return max(raw_auc, 1.0 - raw_auc)
 
 
 def _attack_auc(y_true: np.ndarray, scores: np.ndarray) -> float:
-    raw_auc = _auc(y_true, scores)
-    return max(raw_auc, 1.0 - raw_auc)
+    return _attack_auc_from_ranks(y_true, _average_ranks(scores))

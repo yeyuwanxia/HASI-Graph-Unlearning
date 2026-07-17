@@ -40,7 +40,7 @@ CONFIG_KEYS = (
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Paper-grade HASI hyperparameter sweep with validation scoring and multi-seed aggregation.")
-    parser.add_argument("--dataset", default="pubmed", choices=["cora", "citeseer", "pubmed", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered"])
+    parser.add_argument("--dataset", default="pubmed", choices=["cora", "citeseer", "pubmed", "primekg-full-nosource", "primekg-disease-gene-small", "primekg-disease-gene-small-nosource", "hetionet-small-nosource", "hetionet-full-nosource", "ppi-homo-sl-filtered", "ppi-inductive-sl-filtered", "ppi-inductive-sl-mostfreq-filtered", "ppi-inductive-sl-balanced20-filtered", "ppi-inductive-sl-balanced10-filtered"])
     parser.add_argument("--unlearning_type", default="node", choices=["node", "edge", "feature"])
     parser.add_argument("--ratios", default="0.1", help="Comma-separated forget ratios.")
     parser.add_argument("--seeds", default="42,123,2024", help="Comma-separated seeds used for shared base artifacts and runs.")

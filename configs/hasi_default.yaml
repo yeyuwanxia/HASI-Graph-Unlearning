@@ -21,6 +21,9 @@ hub_identification:
   filter_ratio: 0.1
   primary_ratio: 0.01
   secondary_ratio: 0.05
+  ppr_alpha: 0.15
+  ppr_max_iter: 50
+  ppr_tol: 1.0e-6
 
 anchor_stabilization:
   lambda1: 2.0
@@ -70,6 +73,10 @@ optimization:
   subgraph_finetune: true
   subgraph_min_nodes: 5000
   lazy_train_inpainter: true
+  graph_compute_backend: auto
+  hub_ppr_batch_size: 64
+  hub_score_cache: true
+  hub_score_cache_root: results/cache/hub_scores
 
 feature_unlearning:
   drift_threshold: 1.0e-6
