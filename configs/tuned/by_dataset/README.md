@@ -22,6 +22,10 @@ configs/tuned/by_dataset/
     node.yaml
     edge.yaml
     feature.yaml
+  primekg-full-nosource/
+    node.yaml
+    edge.yaml
+    feature.yaml
   primekg-disease-gene-small/
     edge.yaml
     feature.yaml
@@ -35,7 +39,9 @@ Selection notes:
 - `pubmed/edge.yaml` uses the PubMed-selected edge configuration from `results/tuning/pubmed/edge/repair32_anchor1p0_0p2_forget000`.
 - `pubmed/feature.yaml` uses the PubMed-selected feature configuration from `results/tuning/pubmed/feature/drift1e2_lowforget005`.
 
-- `hetionet-full-nosource/*` contains configurations tuned on `hetionet-small-nosource` and transferred unchanged to the full homogeneous projection. The original small-dataset tuning paths remain recorded in each YAML; these are transferred configurations, not full-dataset retuning outputs.
+- `hetionet-full-nosource/*` contains the official final HASI configurations for Hetionet full. `node.yaml` uses full-dataset all-components `cfg0037`; `feature.yaml` uses the full-dataset feature selection; `edge.yaml` retains the small-dataset transfer after repeated full-dataset searches found no hard-pass replacement. `PROVENANCE.md` records the retired transfer parameters and selection trade-offs.
+
+- `primekg-full-nosource/node.yaml` uses the full-dataset true-original-KL balance search `cfg0001`, validated on all six formal ratio/seed combinations. `edge.yaml` uses the full-dataset privacy-guarded search `cfg0009`, and `feature.yaml` uses the full-dataset utility-priority `cfg0000`. The provenance file records retired transfer parameters and selection trade-offs.
 
 - `primekg-disease-gene-small/edge.yaml` keeps the default HASI configuration because the edge privacy-refine sweep did not improve the validation privacy-utility trade-off over default.
 - `primekg-disease-gene-small/feature.yaml` uses the selected feature configuration from `results/tuning/primekg-disease-gene-small/feature/best_config.yaml`.

@@ -1,3 +1,6 @@
+# Final PrimeKG-Full-NoSource Feature tuned HASI config.
+# Source: results/tuning/primekg_full_feature_utility_guarded_gpu2_20260721/final/feature/configs/config_0000.json
+# Selection: cfg0000 improved Accuracy and Macro-F1 for every formal base seed.
 model:
   type: GCN
   hidden_channels: 64
@@ -21,10 +24,13 @@ hub_identification:
   filter_ratio: 0.1
   primary_ratio: 0.01
   secondary_ratio: 0.05
+  ppr_alpha: 0.15
+  ppr_max_iter: 50
+  ppr_tol: 1.0e-6
 
 anchor_stabilization:
-  lambda1: 0.5
-  lambda2: 0.05
+  lambda1: 2.0
+  lambda2: 0.5
 
 erf_partitioning:
   alpha: 0.15
@@ -34,16 +40,16 @@ erf_partitioning:
 inpainting:
   mode: full
   method: mgae
-  cc_drop_threshold: 0.30
-  min_damage_ratio: 0.10
+  cc_drop_threshold: 0.3
+  min_damage_ratio: 0.1
   hidden_channels: 64
   embedding_channels: 32
   train_epochs: 80
   lr: 0.01
   mask_ratio: 0.15
-  edge_threshold: 0.50
+  edge_threshold: 0.5
   max_added_edges: 256
-  repair_ratio: 0.15
+  repair_ratio: 0.35
   max_candidate_nodes: 512
   max_candidate_edges: 20000
 
@@ -59,18 +65,22 @@ dar:
   max_search_radius: null
 
 unlearning:
-  type: node
+  type: feature
   ratio: 0.1
-  edge_forget_loss_mode: uniform
-  forget_weight: 0.3
-  finetune_epochs: 50
-  finetune_lr: 0.003
+  forget_weight: 0.1
+  edge_forget_loss_mode: original_kl
+  finetune_epochs: 80
+  finetune_lr: 0.01
 
 optimization:
   affected_anchor_scope: erf
   subgraph_finetune: true
   subgraph_min_nodes: 5000
   lazy_train_inpainter: true
+  graph_compute_backend: auto
+  hub_ppr_batch_size: 64
+  hub_score_cache: true
+  hub_score_cache_root: results/cache/hub_scores
 
 feature_unlearning:
   drift_threshold: 1.0e-6
@@ -79,22 +89,3 @@ feature_unlearning:
 evaluation:
   mia_levels: [weak, medium, strong]
   run_structural_metrics: true
-
-# Selected by experiments/sweep_hasi_params.py
-# source: results/tuning/pubmed_node_privacy_guarded_gpu1_20260717/final/node/best_config.yaml
-# grid: node_pubmed_privacy_guarded_refine
-# score_mode: privacy_guarded
-# score: 0.3831010277043369
-# score_without_stability: 0.37175842429934797
-# stability_penalty_norm: 0.11342603404988916
-# passes_hard_constraints: True
-# val_accuracy_drop_mean: 0.0001690759996618718
-# val_accuracy_drop_std: 0.0012389937246131658
-# val_f1_macro_drop_mean: -0.0003944579725125852
-# val_f1_macro_drop_std: 0.0013154232639637135
-# overall_mia_auc_mean: 0.5624709794935834
-# privacy_gap_mean: 0.062470979493583344
-# structure_damage_norm: 0.0
-# exact_alignment_damage_norm: 1.0
-# unlearn_time_seconds_mean: 45.7034054492057
-# runtime_ratio_vs_default_mean: 1.0105805938922965

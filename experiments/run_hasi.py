@@ -133,6 +133,11 @@ def parse_args():
     parser.add_argument("--forget_weight", type=float, default=None)
     parser.add_argument("--edge_forget_loss_mode", default=None, choices=["original_kl", "uniform", "none"])
     parser.add_argument(
+        "--node_forget_loss_mode",
+        default=None,
+        choices=["original_kl", "post_removal_kl", "uniform", "none"],
+    )
+    parser.add_argument(
         "--gradient_hub_score",
         "--gradient-hub-score",
         action=argparse.BooleanOptionalAction,
@@ -653,6 +658,11 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
     args.finetune_lr = _arg(args, "finetune_lr", finetune_lr_default)
     args.forget_weight = _arg(args, "forget_weight", unlearning_cfg.get("forget_weight", 0.0))
     args.edge_forget_loss_mode = _arg(args, "edge_forget_loss_mode", unlearning_cfg.get("edge_forget_loss_mode", "original_kl"))
+    args.node_forget_loss_mode = _arg(
+        args,
+        "node_forget_loss_mode",
+        unlearning_cfg.get("node_forget_loss_mode", "uniform"),
+    )
 
     args.graph_compute_backend = _arg(
         args,
@@ -759,6 +769,7 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
         finetune_lr=args.finetune_lr,
         forget_weight=args.forget_weight,
         edge_forget_loss_mode=args.edge_forget_loss_mode,
+        node_forget_loss_mode=args.node_forget_loss_mode,
         subgraph_finetune=args.subgraph_finetune,
         subgraph_min_nodes=args.subgraph_min_nodes,
         feature_drift_threshold=args.feature_drift_threshold,
@@ -817,6 +828,7 @@ def _resolve_runtime_config(args, file_config: Mapping[str, Any]) -> tuple[HASIC
             "ratio": args.forget_ratio,
             "forget_weight": args.forget_weight,
             "edge_forget_loss_mode": args.edge_forget_loss_mode,
+            "node_forget_loss_mode": args.node_forget_loss_mode,
             "finetune_epochs": args.finetune_epochs,
             "finetune_lr": args.finetune_lr,
         },

@@ -1,7 +1,7 @@
-# Hetionet-Full-NoSource edge transferred tuned HASI config.
+# Final Hetionet-Full-NoSource Edge tuned HASI config.
 # Origin: results/tuning/hetionet-small-nosource/edge_round2_comprehensive_refine/configs/config_0014.json
-# Selection: cfg0014 was tuned on Hetionet-Small-NoSource and then evaluated
-# unchanged on Hetionet-Full-NoSource; no full-dataset retuning was performed.
+# Selection: retained as the final Edge config after the Hetionet-Full searches
+# completed on 2026-07-25 without a privacy/utility hard-pass replacement.
 model:
   type: GCN
   hidden_channels: 64

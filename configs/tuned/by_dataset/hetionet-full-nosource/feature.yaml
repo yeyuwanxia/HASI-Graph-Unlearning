@@ -1,7 +1,7 @@
-# Hetionet-Full-NoSource feature transferred tuned HASI config.
-# Origin: results/tuning/hetionet-small-nosource/feature_round3_utility_privacy_refine/configs/config_0032.json
-# Selection: cfg0032 was tuned on Hetionet-Small-NoSource and then evaluated
-# unchanged on Hetionet-Full-NoSource; no full-dataset retuning was performed.
+# Hetionet-Full-NoSource feature tuned HASI config.
+# Origin: results/tuning/hetionet_full_feature_optimal_search_gpu0_20260717/final/feature/best_config.yaml
+# Selection: active full-dataset tuned feature config. Formal `hasi_tuned`
+# results are stored under results/mia_v2_hetionet-full-nosource_eval/hasi/hasi_tuned/feature/.
 model:
   type: GCN
   hidden_channels: 64
@@ -27,8 +27,8 @@ hub_identification:
   secondary_ratio: 0.05
 
 anchor_stabilization:
-  lambda1: 1.0
-  lambda2: 0.03
+  lambda1: 0.5
+  lambda2: 0.02
 
 erf_partitioning:
   alpha: 0.15
@@ -65,10 +65,10 @@ dar:
 unlearning:
   type: feature
   ratio: 0.1
-  forget_weight: 0.3
+  forget_weight: 0.15
   edge_forget_loss_mode: uniform
-  finetune_epochs: 80
-  finetune_lr: 0.005
+  finetune_epochs: 100
+  finetune_lr: 0.003
 
 optimization:
   affected_anchor_scope: erf

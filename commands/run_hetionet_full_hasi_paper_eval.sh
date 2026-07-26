@@ -108,7 +108,7 @@ for kind in "${kinds[@]}"; do
     selection=random_all
   fi
 
-  for variant in default; do
+  for variant in default tuned; do
     if [[ "$variant" == "default" ]]; then
       config=configs/hasi_default.yaml
       method=hasi_default
