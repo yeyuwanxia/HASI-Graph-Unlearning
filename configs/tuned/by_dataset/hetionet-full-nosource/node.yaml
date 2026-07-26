@@ -1,7 +1,7 @@
-# Hetionet-Full-NoSource node transferred tuned HASI config.
-# Origin: results/tuning/hetionet-small-nosource/node_round2_privacy_wide/configs/config_0007.json
-# Selection: cfg0007 was tuned on Hetionet-Small-NoSource and then evaluated
-# unchanged on Hetionet-Full-NoSource; no full-dataset retuning was performed.
+# Final Hetionet-Full-NoSource Node tuned HASI config.
+# Source: results/tuning/hetionet_full_node_optimal_search_gpu3_20260717/search/node/configs/config_0037.json
+# Selection: cfg0037 keeps all HASI components enabled and was validated on all
+# six formal ratio/seed combinations.
 model:
   type: GCN
   hidden_channels: 64
@@ -27,7 +27,7 @@ hub_identification:
   secondary_ratio: 0.05
 
 anchor_stabilization:
-  lambda1: 0.0
+  lambda1: 0.25
   lambda2: 0.02
 
 erf_partitioning:
@@ -65,9 +65,10 @@ dar:
 unlearning:
   type: node
   ratio: 0.1
-  forget_weight: 0.8
   edge_forget_loss_mode: uniform
-  finetune_epochs: 120
+  node_forget_loss_mode: uniform
+  forget_weight: 1.5
+  finetune_epochs: 150
   finetune_lr: 0.003
 
 optimization:

@@ -29,6 +29,7 @@ rq_run() {
     --dataset_name pubmed
     --config configs/hasi_default.yaml
     --unlearning_type node
+    --node_forget_loss_mode uniform
     --base_artifact_root results/shared_base
     --device cuda:0
     --graph_compute_backend "$GRAPH_COMPUTE_BACKEND"

@@ -76,6 +76,8 @@ def _validate_common(path: Path, payload: dict[str, Any], errors: list[str]) -> 
     base = payload.get("base_artifact", {})
     forget_protocol = forget.get("protocol", {})
     optimization = resolved.get("optimization", {})
+    resolved_unlearning = resolved.get("unlearning", {})
+    training = unlearning.get("training", {})
 
     _require(payload.get("dataset") == "pubmed", prefix, "dataset must be pubmed", errors)
     _require(protocol.get("version") == "paper_eval_20260715_v1", prefix, "wrong evaluation protocol", errors)
@@ -89,8 +91,22 @@ def _validate_common(path: Path, payload: dict[str, Any], errors: list[str]) -> 
     _require(forget_protocol.get("split_source") == "shared_base", prefix, "forget set is not shared-base bound", errors)
     _require(forget_protocol.get("base_artifact_dir") == expected_base, prefix, "forget-set base path mismatch", errors)
     _require(forget_protocol.get("base_training_graph") == "train_subgraph", prefix, "wrong base training graph", errors)
-    _require(forget_protocol.get("selection_scope") == "train_mask_nodes", prefix, "RQ forget set must target training nodes", errors)
-    _require(_as_float(resolved.get("unlearning", {}).get("ratio")) == _as_float(forget.get("ratio")), prefix, "resolved/forget ratio mismatch", errors)
+    _require(
+        forget_protocol.get("selection_scope")
+        in {"train_mask_nodes", "train_mask_hub_neighbors"},
+        prefix,
+        "RQ forget set must target training nodes",
+        errors,
+    )
+    _require(_as_float(resolved_unlearning.get("ratio")) == _as_float(forget.get("ratio")), prefix, "resolved/forget ratio mismatch", errors)
+    _require(training.get("forget_loss_mode") == "uniform", prefix, "actual Node forget loss must be uniform", errors)
+    declared_node_loss = resolved_unlearning.get("node_forget_loss_mode")
+    _require(
+        declared_node_loss in {None, "uniform"},
+        prefix,
+        "resolved Node forget loss disagrees with the formal RQ protocol",
+        errors,
+    )
     _require(privacy.get("status") == "ok", prefix, "node MIA status is not ok", errors)
     _require(privacy.get("medium_evaluation") == "held_out_target_split", prefix, "Medium MIA is not held-out", errors)
     _require((privacy.get("medium_train_size") or 0) > 0, prefix, "Medium MIA train split is empty", errors)

@@ -16,6 +16,12 @@ from hasi.hub_identification import HubScoreConfig, HubScorer
 from hasi.structural_inpainting import StructuralInpainter
 
 
+EDGE_FORGET_LOSS_MODES = frozenset({"original_kl", "uniform", "none"})
+NODE_FORGET_LOSS_MODES = frozenset(
+    {"original_kl", "post_removal_kl", "uniform", "none"}
+)
+
+
 @dataclass
 class HASIConfig:
     hub_identification: HubScoreConfig = field(default_factory=HubScoreConfig)
@@ -44,6 +50,7 @@ class HASIConfig:
     finetune_lr: float = 0.01
     forget_weight: float = 0.1
     edge_forget_loss_mode: str = "original_kl"
+    node_forget_loss_mode: str = "uniform"
     subgraph_finetune: bool = True
     subgraph_min_nodes: int = 5000
     feature_drift_threshold: float = 1e-6
@@ -63,6 +70,16 @@ class HASIUnlearner:
         self.config.anchor_mode = str(self.config.anchor_mode).lower()
         if self.config.anchor_mode not in {"hierarchical", "none"}:
             raise ValueError(f"Unsupported anchor_mode: {self.config.anchor_mode!r}")
+        self.config.edge_forget_loss_mode = str(self.config.edge_forget_loss_mode).lower()
+        if self.config.edge_forget_loss_mode not in EDGE_FORGET_LOSS_MODES:
+            raise ValueError(
+                f"Unsupported edge_forget_loss_mode: {self.config.edge_forget_loss_mode!r}"
+            )
+        self.config.node_forget_loss_mode = str(self.config.node_forget_loss_mode).lower()
+        if self.config.node_forget_loss_mode not in NODE_FORGET_LOSS_MODES:
+            raise ValueError(
+                f"Unsupported node_forget_loss_mode: {self.config.node_forget_loss_mode!r}"
+            )
         self.hub_scorer = HubScorer(self.config.hub_identification)
         self.anchor_manager = AnchorManager(
             primary_ratio=self.config.hub_identification.primary_ratio,
@@ -223,7 +240,7 @@ class HASIUnlearner:
             forget_weight=forget_weight,
             affected_region=plan["affected_region"],
             anchor_excluded_nodes=forget_nodes,
-            forget_loss_mode="uniform",
+            forget_loss_mode=self.config.node_forget_loss_mode,
         )
 
         self.graph = graph_after
@@ -392,8 +409,11 @@ class HASIUnlearner:
         logits_before, embeddings_before = trainer.predict_with_embeddings(self.data)
         if logits_orig is None:
             logits_orig = logits_before
-        _, embeddings_new = trainer.predict_with_embeddings(data_after)
+        logits_post_removal, embeddings_new = trainer.predict_with_embeddings(data_after)
         anchor_snapshot = anchor_snapshot_embeddings if anchor_snapshot_embeddings is not None else embeddings_before
+        forget_loss_mode = str(forget_loss_mode).lower()
+        if forget_loss_mode not in NODE_FORGET_LOSS_MODES:
+            raise ValueError(f"Unsupported forget_loss_mode: {forget_loss_mode!r}")
 
         anchor_loss = None
         primary_nodes: list[int] = []
@@ -425,6 +445,12 @@ class HASIUnlearner:
             if active_forget_weight > 0 and valid_forget_nodes:
                 if forget_loss_mode == "original_kl":
                     loss = loss + active_forget_weight * self._original_kl_forget_loss(logits, logits_orig, valid_forget_nodes)
+                elif forget_loss_mode == "post_removal_kl":
+                    loss = loss + active_forget_weight * self._original_kl_forget_loss(
+                        logits,
+                        logits_post_removal,
+                        valid_forget_nodes,
+                    )
                 elif forget_loss_mode == "uniform":
                     loss = loss + active_forget_weight * self._uniform_forget_loss(logits, valid_forget_nodes)
                 elif forget_loss_mode == "none":
@@ -449,6 +475,12 @@ class HASIUnlearner:
             "embeddings_before_shape": list(embeddings_before.shape),
             "embeddings_after_shape": list(embeddings_after.shape),
             "forget_loss_mode": forget_loss_mode,
+            "forget_loss_target": {
+                "original_kl": "original_graph_logits",
+                "post_removal_kl": "post_removal_logits",
+                "uniform": "uniform_distribution",
+                "none": "none",
+            }[forget_loss_mode],
             "anchor_mode": self.config.anchor_mode,
             "anchor_enabled": self._anchor_enabled(),
             "primary_anchor_nodes": primary_nodes,

@@ -4,6 +4,7 @@ set -euo pipefail
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 CONDA_ENV="${CONDA_ENV:-base}"
 RUN_TYPES="${RUN_TYPES:-node,edge,feature}"
+RUN_VARIANTS="${RUN_VARIANTS:-default,tuned}"
 RESULT_ROOT="${RESULT_ROOT:-results/mia_v2_pubmed_eval/hasi}"
 HUB_SCORE_CACHE_ROOT="${HUB_SCORE_CACHE_ROOT:-results/mia_v2_pubmed_eval/hasi/artifacts/hub_scores}"
 EXACT_RETRAIN_REFERENCE_ROOT="${EXACT_RETRAIN_REFERENCE_ROOT:-results/mia_v2_pubmed_eval/baselines/retrain/edge/artifacts/exact_retrain}"
@@ -97,6 +98,7 @@ exact_retrain_reference_path() {
 }
 
 IFS=',' read -r -a kinds <<< "$RUN_TYPES"
+IFS=',' read -r -a variants <<< "$RUN_VARIANTS"
 for kind in "${kinds[@]}"; do
   if [[ "$kind" != "node" && "$kind" != "edge" && "$kind" != "feature" ]]; then
     echo "Unsupported RUN_TYPES entry: $kind" >&2
@@ -108,7 +110,11 @@ for kind in "${kinds[@]}"; do
     selection=random_all
   fi
 
-  for variant in default tuned; do
+  for variant in "${variants[@]}"; do
+    if [[ "$variant" != "default" && "$variant" != "tuned" ]]; then
+      echo "Unsupported RUN_VARIANTS entry: $variant" >&2
+      exit 2
+    fi
     if [[ "$variant" == "default" ]]; then
       config=configs/hasi_default.yaml
       method=hasi_default
